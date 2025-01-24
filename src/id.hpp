@@ -6,8 +6,10 @@
 
 class SID {
 public:
-  SID() : mID(10) {}
-  SID(uint64_t id) : mID(id) {
+  SID() : mID(-1) {
+    mValid = (assetID(mID) == 0);
+  }
+  SID(int64_t id) : mID(id) {
     mValid = (assetID(mID) == 0);
   }
   ~SID() {}
@@ -15,14 +17,14 @@ public:
   SID getParentID();
   SID createNewID(int subIndex);
   static SID createNewID(SID sID, int subIndex);
-  uint64_t & getSubIndex();
-  uint64_t getID() {return mID;}
-  int getNodeLevel();
-  static int assetID(uint64_t sid);
-  std::vector<SID> getPath();
+  int getSubIndex() const;
+  int64_t getID() const {return mID;}
+  int getNodeLevel() const;
+  static int assetID(int64_t sid);
+  std::vector<SID> getPath() const;
 
 private:
-  uint64_t mID;
+  int64_t mID;
   bool mValid;
 };
 

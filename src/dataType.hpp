@@ -35,8 +35,8 @@ struct Item
   std::string timePiecesTable;
   std::string desc; // description
   Item() {
-    taskID = 1010;
-    parentTaskID = 10;
+    taskID = -1;
+    parentTaskID = -1;
     status = static_cast<int>(TaskStatus::TODO);
     priority = static_cast<int>(Priority::MINOR);
     efficiency = 0;
@@ -53,8 +53,8 @@ struct Item
 
 struct TPieces
 {
-  uint64_t piecesID;
-  uint64_t taskID;
+  int64_t piecesID;
+  int64_t taskID;
   uint32_t serialNumber;
   uint8_t efficiency;
   int64_t begintime;

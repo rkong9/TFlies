@@ -2,8 +2,9 @@
 #include <vector>
 #include <cmath>
 #include "id.hpp"
+#include "logger.h"
 
-const static uint64_t lens[20] = {
+const static int64_t lens[20] = {
     1,
     10,
     100,
@@ -36,19 +37,28 @@ int digits10(int num) {
 
 SID SID::getParentID() {
   // return 
+  if (mID == 0) {
+    return SID(-1);
+  }
+
   std::string currID = std::to_string(mID);
   size_t markIndex(0);
   int nums(0);
   while(markIndex < currID.length()) {
-    int nums = currID[markIndex] - '0';
+    nums = currID[markIndex] - '0';
     markIndex += nums + 1;
   }
 
-  if (markIndex != currID.length() || markIndex == nums + 1) {
-    return SID(10);
+  pLogger->trace("sid:{}, markI:{}, nums:{}, idLen:{}",
+      mID, markIndex, nums, currID.length());
+  if (markIndex != currID.length()) {
+    return SID(-1);
+  } else if (markIndex == nums + 1) {
+    pLogger->debug("parent id is root");
+    return SID(0);
   }
-  uint64_t p_id = std::atoi(currID.substr(0, markIndex - nums - 1).c_str());
 
+  int64_t p_id = std::atoi(currID.substr(0, markIndex - nums - 1).c_str());
   return SID(p_id);
 }
 
@@ -57,45 +67,81 @@ SID SID::createNewID(int subIndex) {
 }
 
 SID SID::createNewID(SID sid, int subIndex) {
-  if (subIndex <= 0 || !sid.isValid()) {
-    return SID(0);
+  if (subIndex < 0 || !sid.isValid()) {
+    pLogger->warn("create new id failed, sid:{}, subIndex:{}", sid.getID(), subIndex);
+    return SID(-1);
   }
-  int digits = digits10(subIndex);
+  int digits = 1;
+  if (subIndex > 0) {
+    digits = digits10(subIndex);
+  }
+
   if (digits > 9) {
-    return SID(0);
+    pLogger->warn("subIndex is overrange, sid:{}, subIndex:{}", sid.getID(), subIndex);
+    return SID(-1);
   }
-  uint64_t offset = std::pow(10, digits);
-  uint64_t newID = sid.getID() * offset * 10;
+  int64_t offset = std::pow(10, digits);
+  int64_t newID = sid.getID() * offset * 10;
   newID += digits * offset + subIndex;
   return SID(newID);
 }
 
-int SID::assetID(uint64_t id) {
-  if (id == 0) {
+int SID::getSubIndex() const {
+  int subIndex(0);
+  if (mID == 0) {
     return -1;
   }
-  std::string currID = std::to_string(id);
+
+  std::string currID = std::to_string(mID);
   size_t markIndex(0);
   int nums(0);
   while(markIndex < currID.length()) {
-    int nums = currID[markIndex] - '0';
+    nums = currID[markIndex] - '0';
     markIndex += nums + 1;
   }
 
   if (markIndex != currID.length()) {
+    pLogger->warn("invalid id:{}, markIndex:{}, nums:{}, idLen:{}",
+      mID, markIndex, nums, currID.length());
+    subIndex = -1;
+  } else {
+    subIndex = std::atoi(currID.substr(currID.length() - nums).c_str());
+  }
+
+  return subIndex;
+}
+
+int SID::assetID(int64_t id) {
+  if (id == 0) { // root id
+    return 0;
+  } else if (id < 0) {
+    return -1;
+  }
+
+  std::string currID = std::to_string(id);
+  size_t markIndex(0);
+  int nums(0);
+  while(markIndex < currID.length()) {
+    nums = currID[markIndex] - '0';
+    markIndex += nums + 1;
+  }
+
+  if (markIndex != currID.length()) {
+    pLogger->warn("invalid id:{}, markIndex:{}, nums:{}, idLen:{}",
+      id, markIndex, nums, currID.length());
     return -1;
   }
   return 0;
 }
 
-std::vector<SID> SID::getPath() {
+std::vector<SID> SID::getPath() const {
   std::vector<SID> vPath;
   do {
-    if (mID == 0) {
+    if (mID == 0 || !mValid) {
       break;
     }
 
-    uint64_t tempID(mID);
+    int64_t tempID(mID);
     vPath.clear();
     for (int i = digits10(tempID); i > 0;) {
       int subLen = i - 1;
@@ -116,8 +162,11 @@ std::vector<SID> SID::getPath() {
   return vPath;
 }
 
-int SID::getNodeLevel() {
+int SID::getNodeLevel() const {
   int level(0);
+  if (mID <= 0) {
+    return 0;
+  }
 
   std::string currID = std::to_string(mID);
   size_t markIndex(0);

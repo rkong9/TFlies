@@ -81,7 +81,7 @@ bool createDefaultDatabase(const std::string& dbPath) {
     return true;
 }
 
-bool loadOrCreateDatabase(const std::string& dbPath, std::unordered_map<uint64_t, TNodePtr> &mNode) {
+bool loadOrCreateDatabase(const std::string& dbPath, std::unordered_map<int64_t, TNodePtr> &mNode) {
     sqlite3* db;
 
     // 打开数据库
@@ -128,17 +128,17 @@ bool loadOrCreateDatabase(const std::string& dbPath, std::unordered_map<uint64_t
 
       Item ti;
       while (sqlite3_step(stmt) == SQLITE_ROW) {
-        ti.taskID = sqlite3_column_int(stmt, 0);
+        ti.taskID = sqlite3_column_int64(stmt, 0);
         SID sid(ti.taskID);
         std::string strID = std::to_string(ti.taskID);
-        if (!sid.isValid() || strID.length() < 2 || strID.substr(0, 2) != "10") {
+        if (!sid.isValid()) {
           pLogger->warn("invalid taskID:{}", ti.taskID);
           continue;
         }
 
         ti.name =
           std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
-        ti.parentTaskID = sqlite3_column_int(stmt, 2);
+        ti.parentTaskID = sqlite3_column_int64(stmt, 2);
         ti.status = sqlite3_column_int(stmt, 3);
         ti.priority = sqlite3_column_int(stmt, 4);
         ti.createTime = sqlite3_column_int64(stmt, 5);
@@ -158,7 +158,7 @@ bool loadOrCreateDatabase(const std::string& dbPath, std::unordered_map<uint64_t
                       ti.createTime);
 
         SID temp_id = sid;
-        if (mNode.find(sid.getID()) == mNode.end()) {
+        if (mNode.find(sid.getID()) != mNode.end()) {
           mNode[sid.getID()]->setData(ti);
           mNode[sid.getID()]->backUpdate(ti);
           pLogger->info("reset task:{} values", sid.getID());
@@ -169,9 +169,16 @@ bool loadOrCreateDatabase(const std::string& dbPath, std::unordered_map<uint64_t
             mNode[temp_id.getID()] = pTempNode;
             pLogger->info("insert task:{}, name:{}, parentTaskID:{}",
                       temp_id.getID(), pTempNode->getData().name, temp_id.getParentID().getID());
+
             temp_id = sid.getParentID();
-            pTempNode = std::make_shared<TNode>();
-            pTempNode->setID(temp_id);
+            if (mNode.find(temp_id.getID()) == mNode.end()) { // no parent node
+              std::shared_ptr<TNode> pParent = std::make_shared<TNode>();
+              pParent->setID(temp_id);
+              pParent->setSubNode(pTempNode);
+              pTempNode = pParent;
+            } else {
+              mNode[temp_id.getID()]->setSubNode(pTempNode);
+            }
           }
           pCurrentNode->backUpdate(ti);
         }
@@ -186,7 +193,7 @@ bool loadOrCreateDatabase(const std::string& dbPath, std::unordered_map<uint64_t
 
 void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     CmdParserPtr createParser(new CmdParser);
-    createParser->add<uint64_t>("parentID", 'P', "task parent ID", false, 10);
+    createParser->add<int64_t>("parentID", 'P', "task parent ID", false, 0);
     createParser->add<std::string>("name", 'n', "task name", true);
     createParser->add<std::string>("dueDate", 'd', "task due date", false, "None");
     createParser->add<std::string>("description", 't', "task description", false, "None");
@@ -195,24 +202,24 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     mParser["create"] = createParser;
 
     CmdParserPtr deleteParser(new CmdParser);
-    deleteParser->add<uint64_t>("ID", 'I', "task ID", true);
+    deleteParser->add<int64_t>("ID", 'I', "task ID", true);
     mParser["delete"] = deleteParser;
 
     CmdParserPtr listParser(new CmdParser);
-    listParser->add<uint64_t>("ID", 'I', "task ID", false, 10);
-    listParser->add<int>("level", 'l', "task list level", false, 1);
+    listParser->add<int64_t>("ID", 'I', "task ID", false, 0);
+    listParser->add<int>("level", 'l', "task list level", false, -1);
     mParser["list"] = listParser;
 
     CmdParserPtr startParser(new CmdParser);
-    startParser->add<uint64_t>("ID", 'I', "task ID", true);
+    startParser->add<int64_t>("ID", 'I', "task ID", true);
     mParser["start"] = startParser;
 
     CmdParserPtr stopParser(new CmdParser);
-    stopParser->add<uint64_t>("ID", 'I', "task ID", true);
+    stopParser->add<int64_t>("ID", 'I', "task ID", true);
     mParser["stop"] = stopParser;
 
     CmdParserPtr doneParser(new CmdParser);
-    doneParser->add<uint64_t>("ID", 'I', "task ID", true);
+    doneParser->add<int64_t>("ID", 'I', "task ID", true);
     mParser["done"] = doneParser;
 }
 
@@ -261,7 +268,7 @@ int64_t timeParserDate(const std::string &timeStr) {
     std::regex pattern(R"((\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\+(\d{3}))");
     std::smatch match;
 
-    int finalTimestamp(-1);
+    int64_t finalTimestamp(-1);
     do {
       if (std::regex_match(timeStr, match, pattern)) {
           int year = std::stoi(match[1]);
@@ -347,7 +354,7 @@ int64_t timeParserValue(const std::string &str) {
 }
 
 int createT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
-  std::unordered_map<uint64_t, TNodePtr> &mNode) {
+  std::unordered_map<int64_t, TNodePtr> &mNode) {
   if (!pParser->parse(vArgs)) {
     std::cout << "parse creat cmd arguments failed, " << pParser->usage()
               << std::endl;
@@ -361,7 +368,7 @@ int createT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
   // }
 
   Item it;
-  uint64_t pID = pParser->get<uint64_t>("parentID");
+  int64_t pID = pParser->get<int64_t>("parentID");
   SID s_pID(pID);
   if (!s_pID.isValid() || mNode.find(pID) == mNode.end()) {
     pLogger->warn("get invalid parent id:{}, create task failed", pID);
@@ -377,11 +384,21 @@ int createT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
   std::string eTimeStr = pParser->get<std::string>("expectTime");
   it.expectTime = timeParserValue(eTimeStr);
 
-  std::string dueDateStr = pParser->get<std::string>("dueDate");
-  it.dueTime = timeParserDate(dueDateStr);
+  if (pParser->exist("dueDate")) {
+    std::string dueDateStr = pParser->get<std::string>("dueDate");
+    it.dueTime = timeParserDate(dueDateStr);
+  }
 
   TNodePtr subNode = pNode->createSubNode(it);
-  pLogger->info("creat new task:{} ID:{} success", it.name, subNode->getID());
+  if (subNode) {
+    pLogger->trace("creat new task:{} ID:{} success", it.name, subNode->getID());
+    auto it = subNode->getData();
+    pLogger->debug("id:{}, pid:{}, status:{}, prior:{}, effi:{}, creT:{}, updT:{}, dueT:{}, costT:{}, expT:{}, name:{}",
+        it.taskID, it.parentTaskID, it.status, it.priority, it.efficiency, it.createTime, it.updateTime,
+        it.dueTime, it.costTime, it.expectTime, it.name);
+  } else {
+    pLogger->warn("creat new task:{} failed, invalid nodeptr", it.name);
+  }
   return 0;
 }
 
@@ -400,16 +417,16 @@ bool insertOrUpdateTask(sqlite3* db, const Item &ti) {
     }
 
     // 绑定参数
-    sqlite3_bind_int(stmt, 1, ti.taskID);
+    sqlite3_bind_int64(stmt, 1, ti.taskID);
     sqlite3_bind_text(stmt, 2, ti.name.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_int(stmt, 3, ti.parentTaskID);
+    sqlite3_bind_int64(stmt, 3, ti.parentTaskID);
     sqlite3_bind_int(stmt, 4, ti.status);
     sqlite3_bind_int(stmt, 5, ti.priority);
-    sqlite3_bind_int(stmt, 6, ti.createTime);
-    sqlite3_bind_int(stmt, 7, ti.updateTime);
-    sqlite3_bind_int(stmt, 8, ti.dueTime);
-    sqlite3_bind_int(stmt, 9, ti.costTime);
-    sqlite3_bind_int(stmt, 10, ti.expectTime);
+    sqlite3_bind_int64(stmt, 6, ti.createTime);
+    sqlite3_bind_int64(stmt, 7, ti.updateTime);
+    sqlite3_bind_int64(stmt, 8, ti.dueTime);
+    sqlite3_bind_int64(stmt, 9, ti.costTime);
+    sqlite3_bind_int64(stmt, 10, ti.expectTime);
     sqlite3_bind_int(stmt, 11, ti.efficiency);
     sqlite3_bind_text(stmt, 12, ti.timePiecesTable.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 13, ti.desc.c_str(), -1, SQLITE_STATIC);
@@ -420,6 +437,10 @@ bool insertOrUpdateTask(sqlite3* db, const Item &ti) {
         sqlite3_finalize(stmt);
         return false;
     }
+
+    pLogger->debug("storetoDb, id:{}, pid:{}, status:{}, prior:{}, effi:{}, creT:{}, updT:{}, dueT:{}, costT:{}, expT:{}, name:{}",
+        ti.taskID, ti.parentTaskID, ti.status, ti.priority, ti.efficiency, ti.createTime, ti.updateTime,
+        ti.dueTime, ti.costTime, ti.expectTime, ti.name);
 
     // 释放资源
     sqlite3_finalize(stmt);
@@ -468,7 +489,7 @@ int storeToDb(const std::string &dbPath, const TNodePtr &pNode) {
 }
 
 int deleteT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
-  std::unordered_map<uint64_t, TNodePtr> &mNode) {
+  std::unordered_map<int64_t, TNodePtr> &mNode) {
   pParser->parse(v_args);
   if (!pParser->parse(v_args)) {
     std::cout << "parse deleteT cmd arguments failed, usage:" << pParser->usage()
@@ -479,13 +500,68 @@ int deleteT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
   return 0;
 }
 
-int listT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args) {
+void listAllT(std::shared_ptr<TNode> pNode, std::function<bool(std::shared_ptr<TNode>)> filter) {
+  // for 
+  // std::stringstream ss;
+  std::stack<std::shared_ptr<TNode>> spNode;
+  spNode.push(pNode);
+  int pNodeLevel = pNode->getLevel();
+  while(!spNode.empty()) {
+    std::shared_ptr<TNode> pTempNode = spNode.top();
+    spNode.pop();
+    int currLevel = pTempNode->getLevel();
+    for (int i = 0; i < currLevel - pNodeLevel; i++) {
+        std::cout << " | ";
+    }
+
+    auto it = pTempNode->getData();
+    if (filter(pTempNode)) {
+        std::cout << "+" << it.taskID << " " << it.name << '\n';
+    } else {
+        std::cout << "-" << it.taskID << " " << it.name << '\n';
+      for (auto it = pTempNode->mqSubTNode.rbegin(); it != pTempNode->mqSubTNode.rend(); it++) {
+        spNode.push(*it);
+      }
+    }
+  }
+}
+
+int listT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
+  std::unordered_map<int64_t, TNodePtr> &mNode) {
   pParser->parse(v_args);
-  if (!pParser->parse(v_args) || pParser->exist("help")) {
+  if (!pParser->parse(v_args)) {
     std::cout << "parse listT cmd arguments failed, usage:" << pParser->usage()
               << std::endl;
     return -1;
   }
+
+  int level = pParser->get<int>("level");
+  if (level < 0) {
+    level = 9999;
+  }
+  int64_t id = pParser->get<int64_t>("ID");
+
+  if (mNode.find(id) != mNode.end()) {
+    int currLevel = mNode[id]->getLevel();
+    auto filter = [&](std::shared_ptr<TNode> pNode) -> bool {
+      if (pNode->getLevel() < currLevel + level) {
+        return false;
+      }
+      return true;
+    };
+
+    listAllT(mNode[id], filter);
+    pLogger->trace("list node:{}, currLevel:{}, level:{}", id, currLevel, level);
+  } else {
+    pLogger->warn("cannot find id:{} to list", id);
+  }
+
+  return 0;
+}
+
+int showT(const CmdParser &pParser, const std::vector<std::string> &v_args,
+    std::unordered_map<int64_t, TNodePtr> &mNode) {
+
   return 0;
 }
 
@@ -519,32 +595,6 @@ int doneT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args) {
   return 0;
 }
 
-void listAllT(std::shared_ptr<TNode> pNode, std::function<bool(std::shared_ptr<TNode>)> filter, int level = 0) {
-  // for 
-  // std::stringstream ss;
-  std::stack<std::shared_ptr<TNode>> spNode;
-  spNode.push(pNode);
-  int pNodeLevel = pNode->getLevel();
-  while(!spNode.empty()) {
-    std::shared_ptr<TNode> pTempNode = spNode.top();
-    spNode.pop();
-    int currLevel = pTempNode->getLevel();
-    for (int i = 0; i < currLevel - pNodeLevel; i++) {
-        std::cout << " | ";
-    }
-
-    if (filter(pNode)) {
-        std::cout << "+" << pNode->getID() << '\n';
-
-    } else {
-        std::cout << "-" << pNode->getID() << '\n';
-      for (auto it = pTempNode->mqSubTNode.rbegin(); it != pTempNode->mqSubTNode.rend(); it++) {
-        spNode.push(*it);
-      }
-    }
-  }
-}
-
 int main(int argc, char **argv) {
 
     auto fileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>("./tfLog.txt", 1024 * 1024 * 10, 100, false);
@@ -552,15 +602,18 @@ int main(int argc, char **argv) {
 
     auto consoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     consoleSink->set_level(spdlog::level::warn);
+
     pLogger = std::make_shared<spdlog::logger>("Log", spdlog::sinks_init_list{fileSink, consoleSink});
+    // pLogger->set_pattern("[%Y%m%d %H:%M:%S.%e] [%l] [%@] [%!] %v");
     pLogger->set_level(spdlog::level::trace);
 
     // pLogger->set_level(spdlog::level::trace);
     Item rIt;
     rIt.name = "root";
-    std::shared_ptr<TNode> pRootNode(new TNode(rIt, SID()));
-    std::unordered_map<uint64_t, TNodePtr> mNode;
+    std::shared_ptr<TNode> pRootNode(new TNode(rIt, SID(0)));
+    std::unordered_map<int64_t, TNodePtr> mNode;
     mNode[pRootNode->getID()] = pRootNode;
+    pLogger->debug("create root node success, id:{}", pRootNode->getID());
 
     std::string dbPath = ".tf.db"; // 数据库路径
     if (loadOrCreateDatabase(dbPath, mNode)) {
@@ -617,9 +670,11 @@ int main(int argc, char **argv) {
           continue;
         }
 
+        std::stringstream ss;
         for (auto &buff : vBuff) {
-            std::cout << "get buff:\"" << buff << "\"\n";
+             ss << "get buff:\"" << buff << "\"  ";
         }
+        pLogger->debug("{}", ss.str());
 
         if (vBuff[0] == "q") {
             pLogger->info("exit program!");
@@ -628,12 +683,14 @@ int main(int argc, char **argv) {
         } else if (vBuff[0] == "create") {
           pLogger->info("get create cmd");
           createT(gmCmdParser["create"], vBuff, mNode);
+          // gmCmdParser["create"]->reset();
+        } else if (vBuff[0] == "delete") {
+          pLogger->info("get delete cmd");
+        } else if (vBuff[0] == "list") {
+          pLogger->info("get list cmd");
+          listT(gmCmdParser["list"], vBuff, mNode);
+          gmCmdParser["list"]->rest();
         }
-        // else if (input.substr(0, 6) == "delete") {
-        //   pLogger->info("get delete cmd");
-        // } else if (v_args[0] == "list") {
-        //   pLogger->info("get list cmd");
-        // }
 
     }
     return 0;
