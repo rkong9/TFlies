@@ -12,7 +12,7 @@
 #include <iomanip>
 #include <stdexcept>
 
-// #include "logger.hpp"
+#include "logger.hpp"
 #include "dataType.hpp"
 #include "tNode.hpp"
 
@@ -23,7 +23,6 @@
 
 #include <sqlite3.h>
 
-std::shared_ptr<spdlog::logger> pLogger;
 typedef cmdline::parser CmdParser;
 typedef std::shared_ptr<cmdline::parser> CmdParserPtr;
 std::unordered_map<std::string, CmdParserPtr> gmCmdParser;
