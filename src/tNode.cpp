@@ -1,6 +1,6 @@
 #include <chrono>
 #include "tNode.hpp"
-#include "logger.h"
+#include "logger.hpp"
 
 int64_t getCurrentTimeMs() {
     auto now = std::chrono::system_clock::now();
@@ -76,7 +76,7 @@ void TNode::backUpdate(const Item &item) {
   if (mData.updateTime < item.updateTime) {
     mData.updateTime = item.updateTime;
   }
-  if (mpParent && SID::assetID(mpParent->getID() == 0)) {
+  if (mpParent && SID::assertID(mpParent->getID())) {
     mpParent->backUpdate(mData);
   }
 }

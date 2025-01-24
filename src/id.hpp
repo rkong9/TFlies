@@ -7,25 +7,41 @@
 class SID {
 public:
   SID() : mID(-1) {
-    mValid = (assetID(mID) == 0);
+    parse();
   }
   SID(int64_t id) : mID(id) {
-    mValid = (assetID(mID) == 0);
+    parse();
   }
   ~SID() {}
+  void setValue(int64_t id) {
+    mID = id;
+    parse();
+  }
+
   bool isValid() {return mValid;}
-  SID getParentID();
+  SID getParentID() {return SID(mParentID);};
   SID createNewID(int subIndex);
   static SID createNewID(SID sID, int subIndex);
-  int getSubIndex() const;
   int64_t getID() const {return mID;}
-  int getNodeLevel() const;
-  static int assetID(int64_t sid);
+  int getSubIndex() const {return mSubIndex; };
+  int getNodeLevel() const { return mLevel; };
+  static int64_t getParentID(int64_t id);
+  static bool assertID(int64_t id);
+  static int getSubIndex(int64_t id);
+  static int getNodeLevel(int64_t id);
   std::vector<SID> getPath() const;
 
 private:
+  void parse();
+
+private:
   int64_t mID;
+  int64_t mParentID;
   bool mValid;
+  int mLevel;
+  int mSubIndex;
 };
+
+extern int digits10(int64_t num);
 
 #endif

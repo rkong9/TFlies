@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(${PROJECT_SOURCE_DIR})
+include_directories(${PROJECT_SOURCE_DIR}/src/)
 include_directories(${PROJECT_SOURCE_DIR}/include/)
 include_directories(${PROJECT_SOURCE_DIR}/third_lib/)
 
@@ -17,6 +18,7 @@ add_definitions("-Wall -g -std=c++17")
 
 # add the executable
 add_executable(TFlies
+    src/logger.cpp
     src/TFlies.cpp
     src/id.cpp
     src/tNode.cpp)
@@ -32,21 +34,21 @@ add_executable(TFlies
 target_link_libraries(TFlies PUBLIC sqlite3 yaml-cpp)
 
 #test 
-# add_executable(ncurses_test test/ncurses_test.cpp)
+# add_executable(id_test test/ncurses_test.cpp)
 # target_link_libraries(ncurses_test PUBLIC ncursesw panelw)
 
 
-# include(GoogleTest)
-# enable_testing()
-# add_executable(
-#   utils_test
-#   test/utils_test.cpp
-#   utils/utils.cpp
-# )
-# 
-# target_link_libraries(
-#   utils_test
-#   GTest::gtest_main
-# )
-# 
-# gtest_discover_tests(utils_test)
+include(GoogleTest)
+enable_testing()
+add_executable(id_test
+  src/logger.cpp
+  src/id.cpp
+  test/id_test.cpp
+)
+
+target_link_libraries(
+  id_test
+  GTest::gtest_main
+)
+
+gtest_discover_tests(id_test)

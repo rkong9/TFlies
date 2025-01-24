@@ -2,7 +2,7 @@
 #include <vector>
 #include <cmath>
 #include "id.hpp"
-#include "logger.h"
+#include "logger.hpp"
 
 const static int64_t lens[20] = {
     1,
@@ -26,40 +26,13 @@ const static int64_t lens[20] = {
     1000000000000000000,
 };
 
-int digits10(int num) {
+int digits10(int64_t num) {
   if (num == 0) {
     return 1;
   } else {
     num = std::abs(num);
     return static_cast<int>(std::log10(num)) + 1;
   }
-}
-
-SID SID::getParentID() {
-  // return 
-  if (mID == 0) {
-    return SID(-1);
-  }
-
-  std::string currID = std::to_string(mID);
-  size_t markIndex(0);
-  int nums(0);
-  while(markIndex < currID.length()) {
-    nums = currID[markIndex] - '0';
-    markIndex += nums + 1;
-  }
-
-  pLogger->trace("sid:{}, markI:{}, nums:{}, idLen:{}",
-      mID, markIndex, nums, currID.length());
-  if (markIndex != currID.length()) {
-    return SID(-1);
-  } else if (markIndex == nums + 1) {
-    pLogger->debug("parent id is root");
-    return SID(0);
-  }
-
-  int64_t p_id = std::atoi(currID.substr(0, markIndex - nums - 1).c_str());
-  return SID(p_id);
 }
 
 SID SID::createNewID(int subIndex) {
@@ -86,52 +59,71 @@ SID SID::createNewID(SID sid, int subIndex) {
   return SID(newID);
 }
 
-int SID::getSubIndex() const {
-  int subIndex(0);
-  if (mID == 0) {
-    return -1;
-  }
+void SID::parse() {
+  bool valid(false);
+  int level(-1), subIndex(-1);
+  int64_t parentID(-1);
+  do {
+    if (mID == 0) { // root id
+      valid = true;
+      level = 0;
+      subIndex = 0;
+      break;
+    } else if (mID < 0) {
+      valid = false;
+      break;
+    }
 
-  std::string currID = std::to_string(mID);
-  size_t markIndex(0);
-  int nums(0);
-  while(markIndex < currID.length()) {
-    nums = currID[markIndex] - '0';
-    markIndex += nums + 1;
-  }
+    std::string currID = std::to_string(mID);
+    size_t markIndex(0);
+    int nums(0);
+    int level_temp(0);
+    while(markIndex < currID.length()) {
+      nums = currID[markIndex] - '0';
+      level_temp++;
+      markIndex += nums + 1;
+    }
 
-  if (markIndex != currID.length()) {
-    pLogger->warn("invalid id:{}, markIndex:{}, nums:{}, idLen:{}",
-      mID, markIndex, nums, currID.length());
-    subIndex = -1;
-  } else {
-    subIndex = std::atoi(currID.substr(currID.length() - nums).c_str());
-  }
-
-  return subIndex;
+    if (markIndex == currID.length() && nums != 0) {
+      subIndex = std::atoi(currID.substr(currID.length() - nums).c_str());
+      if (digits10(subIndex) == nums) {
+        parentID = std::atol(currID.substr(0, markIndex - nums - 1).c_str());
+        valid = true;
+        level = level_temp;
+      } else {
+        subIndex = -1;
+      }
+    } else {
+      pLogger->warn("invalid id:{}, markIndex:{}, nums:{}, idLen:{}",
+        mID, markIndex, nums, currID.length());
+    }
+  } while(0);
+  mValid = valid;
+  mParentID = parentID;
+  mSubIndex = subIndex;
+  mLevel = level;
+  pLogger->trace("parse id:{}, parentID:{}, valid:{}, subIndex:{}, level:{}",
+    mID, mParentID, mValid, mSubIndex, mLevel);
 }
 
-int SID::assetID(int64_t id) {
-  if (id == 0) { // root id
-    return 0;
-  } else if (id < 0) {
-    return -1;
-  }
+int64_t SID::getParentID(int64_t id) {
+  SID temp(id);
+  return temp.getParentID().getID();
+}
 
-  std::string currID = std::to_string(id);
-  size_t markIndex(0);
-  int nums(0);
-  while(markIndex < currID.length()) {
-    nums = currID[markIndex] - '0';
-    markIndex += nums + 1;
-  }
+bool SID::assertID(int64_t id) {
+  SID temp(id);
+  return temp.isValid();
+}
 
-  if (markIndex != currID.length()) {
-    pLogger->warn("invalid id:{}, markIndex:{}, nums:{}, idLen:{}",
-      id, markIndex, nums, currID.length());
-    return -1;
-  }
-  return 0;
+int SID::getSubIndex(int64_t id) {
+  SID temp(id);
+  return temp.getSubIndex();
+}
+
+int SID::getNodeLevel(int64_t id) {
+  SID temp(id);
+  return temp.getNodeLevel();
 }
 
 std::vector<SID> SID::getPath() const {
@@ -160,25 +152,4 @@ std::vector<SID> SID::getPath() const {
 
   } while(0);
   return vPath;
-}
-
-int SID::getNodeLevel() const {
-  int level(0);
-  if (mID <= 0) {
-    return 0;
-  }
-
-  std::string currID = std::to_string(mID);
-  size_t markIndex(0);
-  int nums(0);
-  while(markIndex < currID.length()) {
-    int nums = currID[markIndex] - '0';
-    level++;
-    markIndex += nums + 1;
-  }
-
-  if (markIndex != currID.length()) {
-    return 0;
-  }
-  return level;
 }
