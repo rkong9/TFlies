@@ -1,16 +1,14 @@
 #include <chrono>
 #include "tNode.hpp"
 #include "logger.hpp"
-
-int64_t getCurrentTimeMs() {
-    auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-    auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(duration);
-    return millis.count();
-}
+#include "utils.hpp"
 
 void TNode::setData(const Item &item) {
   mData = item;
+}
+
+void TNode::setParentNode(std::shared_ptr<TNode> &pParent) {
+  mpParent = pParent;
 }
 
 void TNode::setID(const SID &sid) {
@@ -40,13 +38,26 @@ const std::shared_ptr<TNode> TNode::createSubNode(Item &item, int index) {
     pLogger->trace("update node:{} values, id:{}", index, subSID.getID());
   } else {
     if (index < 0) { // direct insert
-      subSID = msID.createNewID(subNodes);
+      int newIndex(subNodes);
+      for (size_t i = 0; i < mqSubTNode.size(); i++) {
+        if (mqSubTNode[i]->mStatus < 0) {
+          newIndex = i;
+          pLogger->trace("find an unused index:{} in node:{}", newIndex, msID.getID());
+          break;
+        }
+      }
+
+      subSID = msID.createNewID(newIndex);
       if (subSID.isValid()) {
         item.createTime = getCurrentTimeMs();
         item.updateTime = item.createTime;
         item.taskID = subSID.getID();
         pSubNode = std::make_shared<TNode>(item, subSID);
-        mqSubTNode.push_back(pSubNode);
+        if (newIndex < subNodes) {
+          mqSubTNode[newIndex] = pSubNode;
+        } else {
+          mqSubTNode.push_back(pSubNode);
+        }
         pLogger->trace("dircet insert new node, id:{}", subSID.getID());
       } else {
         pLogger->warn("dircet insert new node failed, id:{}", subSID.getID());
@@ -85,6 +96,32 @@ int TNode::getSubIndex() {
   return msID.getSubIndex();
 }
 
+int TNode::start() {
+  if (mStatus < 0) {
+    return -1;
+  }
+
+  return 0;
+}
+
+int TNode::stop() {
+  if (mStatus < 0) {
+    return -1;
+  }
+  mStatus = 1;
+
+  return 0;
+}
+
+int TNode::done() {
+  if (mStatus < 0) {
+    return -1;
+  }
+  mStatus = 1;
+
+  return 0;
+}
+
 int TNode::setSubNode(std::shared_ptr<TNode> &node) {
   if (!node) {
     pLogger->warn("node:{} insert invalid node", msID.getID());
@@ -107,4 +144,28 @@ int TNode::setSubNode(std::shared_ptr<TNode> &node) {
   }
 
   return 0;
+}
+
+int TNode::setTimePieces(std::shared_ptr<TPieces> &pieces) {
+ if (!pieces) {
+   pLogger->warn("insert invalid pieces");
+   return -1;
+ }
+
+ if (pieces->serialNumber < 0) {
+   pLogger->warn("pieces:{} invalid invalid pieces's serialNumber", pieces->piecesID);
+   return -1;
+ }
+
+ if (pieces->serialNumber >= mqPieces.size()) {
+    mqPieces.resize(pieces->serialNumber + 5);
+ }
+
+ if (mqPieces[pieces->serialNumber]) {
+    pLogger->warn("task:{}, pieces:{} is collision", msID.getID(), pieces->piecesID);
+    return -2;
+ }
+
+ mqPieces[pieces->serialNumber] = pieces;
+ return 0;
 }

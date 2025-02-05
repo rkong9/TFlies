@@ -55,23 +55,6 @@ TEST(assertID, BasicAssertions)
     ASSERT_EQ(SID::assertID(110), false);
 }
 
-// TEST(generateID, BasicAssertions)
-// {
-//     ASSERT_EQ(generateID(0, 112), 1);
-//     ASSERT_EQ(generateID(12321, 112), 1);
-//     ASSERT_EQ(generateID(101, 112), 1);
-//     ASSERT_EQ(generateID(11110, 112), 1);
-//     ASSERT_EQ(generateID(11, 3), 1113);
-//     ASSERT_EQ(generateID(1111, 3), 111113);
-//     ASSERT_EQ(generateID(10211, 3), 1021113);
-//     ASSERT_EQ(generateID(10211, 13), 10211213);
-//     ASSERT_EQ(generateID(1011, 23), 1011223);
-//     ASSERT_EQ(generateID(1011, 299), 10113299);
-//     ASSERT_EQ(generateID(1011233, 299), 10112333299);
-//     ASSERT_EQ(generateID(1111111111111111111, 299), 1);
-// }
-// 
-
 TEST(getParentID, BasicAssertions)
 {
     ASSERT_EQ(SID::getParentID(0), -1);
@@ -145,6 +128,7 @@ TEST(getSubIndex, BasicAssertions)
     ASSERT_EQ(SID::getSubIndex(209), -1);
     ASSERT_EQ(SID::getSubIndex(19), 9);
 }
+
 // 
 // TEST(getPath, BasicAssertions)
 // {

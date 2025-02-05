@@ -13,13 +13,21 @@
 class TNode
 {
 public:
-  TNode() : msID(-1) {}
+  TNode() : msID(-1) {
+    mStatus = 0;
+  }
   TNode(const Item& data, const SID &sid) : msID(sid), mData(data) {
     mData.taskID = sid.getID();
+    mStatus = 0;
   }
   ~TNode() {}
   void setData(const Item &item);
   void setID(const SID &sid);
+  void setParentNode(std::shared_ptr<TNode> &pParent);
+  const std::shared_ptr<TNode> &getParentNode() {
+    return mpParent;
+  }
+
   const Item &getData();
   int64_t getID();
   int getLevel();
@@ -28,10 +36,12 @@ public:
   const std::shared_ptr<TNode> createSubNode(Item &item, int index = -1);
   void backUpdate(const Item &item);
   int setSubNode(std::shared_ptr<TNode> &node);
+  int setTimePieces(std::shared_ptr<TPieces> &pieces);
+  // void deleteSelfFromTree();
 
   int start();
   int stop();
-  int down();
+  int done();
   int reopen();
 
 private:
@@ -39,12 +49,13 @@ private:
 
 public:
   std::deque<std::shared_ptr<TNode>> mqSubTNode;
-  std::list<std::shared_ptr<TPieces>> mlPieces;
+  std::deque<std::shared_ptr<TPieces>> mqPieces;
+  int mStatus; // 0 normal, 1 updated, -1 deleted
 
 private:
   SID msID;
   Item mData;
-  TPieces mCurrPieces;
+  TPieces mpCurrPieces;
   std::mutex mlSubMutex;
   std::shared_ptr<TNode> mpParent;
 };

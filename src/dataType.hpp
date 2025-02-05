@@ -59,7 +59,18 @@ struct TPieces
   uint8_t efficiency;
   int64_t begintime;
   int64_t endtime;
+  int status;
   std::string desc; // description
+  TPieces() {
+    piecesID = -1;
+    taskID = -1;
+    serialNumber = 0;
+    efficiency = 0;
+    begintime = -1;
+    endtime = -1;
+    desc = "None";
+    status = 0;
+  }
 };
 
 #endif
