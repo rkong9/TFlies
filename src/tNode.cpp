@@ -96,28 +96,76 @@ int TNode::getSubIndex() {
   return msID.getSubIndex();
 }
 
-int TNode::start() {
+int TNode::exe_start() {
+  if (mStatus < 0) {
+    pLogger->warn("current status:{} is invalid", mStatus);
+    return -1;
+  }
+
+  if (mpCurrPieces) {
+    pLogger->warn("this node is already stated");
+    return 1;
+  }
+
+  mpCurrPieces = std::make_shared<TPieces>();
+  mpCurrPieces->begintime = getCurrentTimeMs();
+  mpCurrPieces->taskID = msID.getID();
+  mData.status = static_cast<uint8_t>(TaskStatus::INPROGRESS);
+  return 0;
+}
+
+int TNode::exe_stop(const std::string &desc, uint8_t efficiency) {
   if (mStatus < 0) {
     return -1;
   }
+
+  if (!mpCurrPieces) {
+    pLogger->warn("this node is already stoped");
+    return 1;
+  }
+  mStatus = 1;
+
+  mpCurrPieces->endtime = getCurrentTimeMs();
+  mpCurrPieces->serialNumber = mqPieces.size();
+  mpCurrPieces->piecesID = mPieceNums.load();
+  mpCurrPieces->desc = desc;
+  mpCurrPieces->efficiency = efficiency;
+  mpCurrPieces->status = 1;
+  mqPieces.push_back(mpCurrPieces);
+  mpCurrPieces = nullptr;
+
+  int64_t costTime = mpCurrPieces->endtime - mpCurrPieces->begintime;
+  mData.costTime += costTime;
+  mData.updateTime = mpCurrPieces->endtime;
 
   return 0;
 }
 
-int TNode::stop() {
+int TNode::start() {
   if (mStatus < 0) {
+    pLogger->warn("this node is already abandon");
     return -1;
   }
   mStatus = 1;
+  mData.status = static_cast<uint8_t>(TaskStatus::INPROGRESS);
+}
 
-  return 0;
+int TNode::pause() {
+  if (mStatus < 0) {
+    pLogger->warn("this node is already abandon");
+    return -1;
+  }
+  mStatus = 1;
+  mData.status = static_cast<uint8_t>(TaskStatus::PAUSE);
 }
 
 int TNode::done() {
   if (mStatus < 0) {
+    pLogger->warn("this node is already abandon");
     return -1;
   }
   mStatus = 1;
+  mData.status = static_cast<uint8_t>(TaskStatus::DONE);
 
   return 0;
 }
@@ -158,7 +206,7 @@ int TNode::setTimePieces(std::shared_ptr<TPieces> &pieces) {
  }
 
  if (pieces->serialNumber >= mqPieces.size()) {
-    mqPieces.resize(pieces->serialNumber + 5);
+    mqPieces.resize(pieces->serialNumber);
  }
 
  if (mqPieces[pieces->serialNumber]) {
@@ -167,5 +215,6 @@ int TNode::setTimePieces(std::shared_ptr<TPieces> &pieces) {
  }
 
  mqPieces[pieces->serialNumber] = pieces;
+ mPieceNums++;
  return 0;
 }

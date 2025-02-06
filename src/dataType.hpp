@@ -6,7 +6,7 @@ enum class TaskStatus
 {
   TODO = 0,
   INPROGRESS,
-  PENDING,
+  PAUSE,
   DONE,
 };
 
@@ -43,7 +43,7 @@ struct Item
     createTime = 0;
     updateTime = 0;
     dueTime = -1;
-    costTime = -1;
+    costTime = 0;
     expectTime = -1;
     name = "None";
     timePiecesTable = "None";
@@ -59,8 +59,8 @@ struct TPieces
   uint8_t efficiency;
   int64_t begintime;
   int64_t endtime;
-  int status;
   std::string desc; // description
+  int status; // ignore(0)/write(1)/delete(-1)..
   TPieces() {
     piecesID = -1;
     taskID = -1;

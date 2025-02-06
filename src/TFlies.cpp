@@ -442,8 +442,8 @@ int createT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
   return 0;
 }
 
-bool insertOrUpdateTask(sqlite3* db, const Item &ti, int actionMode) {
-    if (actionMode > 0) {
+bool insertOrUpdateTask(sqlite3* db, const std::shared_ptr<TNode> &node) {
+    if (node->actionMode > 0) {
       // 构造 SQL 语句
       std::string sql = "INSERT OR REPLACE INTO Tasks (TaskID, Name, ParentTaskID, Status, Priority, CreateTime, "
                         "UpdateTime, DueTime, CostTime, ExpectTime, Efficiency, TimePiecesTable, Description) "
@@ -456,6 +456,7 @@ bool insertOrUpdateTask(sqlite3* db, const Item &ti, int actionMode) {
           return false;
       }
 
+      const Item &it = node.getData();
       // 绑定参数
       sqlite3_bind_int64(stmt, 1, ti.taskID);
       sqlite3_bind_text(stmt, 2, ti.name.c_str(), -1, SQLITE_STATIC);
@@ -487,8 +488,30 @@ bool insertOrUpdateTask(sqlite3* db, const Item &ti, int actionMode) {
 
       std::string pieces_sql = "INSERT OR REPLACE INTO TimePieces (PiecesID, TaskID, SerialNumber, Efficiency, BeginTime, EndTime, "
                         "Description) VALUES (?, ?, ?, ?, ?, ?, ?);";
+      if (sqlite3_prepare_v2(db, pieces_sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+          pLogger->error("Failed to prepare statement:{}", sqlite3_errmsg(db));
+          return false;
+      }
 
+      for (auto &pPieces : node->mqPieces) {
+        if (pPieces && pPieces->status > 0) {
+          sqlite3_bind_int64(stmt, 1, pPieces->piecesID);
+          sqlite3_bind_int64(stmt, 2, pPieces->taskID);
+          sqlite3_bind_int(stmt, 3, pPiece->serialNumber);
+          sqlite3_bind_int(stmt, 4, pPiece->efficiency);
+          sqlite3_bind_int64(stmt, 5, pPieces->begintime);
+          sqlite3_bind_int64(stmt, 6, pPieces->endtime);
+          sqlite3_bind_text(stmt, 7, pPieces->desc.c_str(), -1, SQLITE_STATIC);
+          if (sqlite3_step(stmt) != SQLITE_DONE) {
+              pLogger->error("Failed to save pieces prepare statement:{}", sqlite3_errmsg(db));
+              sqlite3_finalize(stmt);
+              continue;
+          }
+          sqlite3_finalize(stmt);
+        }
+      }
       return true;
+
     } else if (actionMode < 0) { // delete node
       char *errMsg = 0;
       std::string sql = "DELETE FROM Tasks WHERE TaskID = " + std::to_string(ti.taskID) + ";";
@@ -502,6 +525,16 @@ bool insertOrUpdateTask(sqlite3* db, const Item &ti, int actionMode) {
           return true;
       }
 
+      std::string sql_pieces = "DELETE FROM TimePieces WHERE TaskID = " + std::to_string(ti.taskID) + ";";
+      rc = sqlite3_exec(db, sql_pieces.c_str(), 0, 0, &errMsg);
+      if (rc != SQLITE_OK) {
+          pLogger->error("delete task pieces:{} from TimePieces failed, err:{}", ti.taskID, sqlite3_errmsg(db));
+          sqlite3_free(errMsg);
+          return false;
+      } else {
+          pLogger->trace("delete task pieces:{} from TimePieces success", ti.taskID);
+          return true;
+      }
     }
     return true;
 }
@@ -521,25 +554,14 @@ int storeToDb(const std::string &dbPath, const TNodePtr &pNode) {
   while(!spNode.empty()) {
     std::shared_ptr<TNode> pTempNode = spNode.top();
     spNode.pop();
-    // int currLevel = pTempNode->getLevel();
-    // for (int i = 0; i < currLevel - pNodeLevel; i++) {
-    //     std::cout << " | ";
-    // }
-
-    // if (filter(pNode)) {
-    //     std::cout << "+" << pNode->getID() << '\n';
-
-    // } else {
-    //     std::cout << "-" << pNode->getID() << '\n';
-    if (insertOrUpdateTask(db, pTempNode->getData(), pTempNode->mStatus)) {
+    if (insertOrUpdateTask(db, pTempNode)) {
       pLogger->trace("Success to insert or update task:{}", pTempNode->getID());
+      for (auto it = pTempNode->mqSubTNode.rbegin(); it != pTempNode->mqSubTNode.rend(); it++) {
+        spNode.push(*it);
+      }
     } else {
       pLogger->error("Failed to insert or update task:{}", pTempNode->getID());
       return -1;
-    }
-
-    for (auto it = pTempNode->mqSubTNode.rbegin(); it != pTempNode->mqSubTNode.rend(); it++) {
-      spNode.push(*it);
     }
 
     // }

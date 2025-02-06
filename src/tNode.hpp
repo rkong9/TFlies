@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <atomic>
 
 #include "dataType.hpp"
 #include "id.hpp"
@@ -39,10 +40,12 @@ public:
   int setTimePieces(std::shared_ptr<TPieces> &pieces);
   // void deleteSelfFromTree();
 
+  int exe_start();
+  int exe_stop(const std::string &desc, uint8_t efficiency);
+
   int start();
-  int stop();
+  int pause();
   int done();
-  int reopen();
 
 private:
   int updateValue();
@@ -50,12 +53,13 @@ private:
 public:
   std::deque<std::shared_ptr<TNode>> mqSubTNode;
   std::deque<std::shared_ptr<TPieces>> mqPieces;
+  std::atomic<int64_t> mPieceNums;
   int mStatus; // 0 normal, 1 updated, -1 deleted
 
 private:
   SID msID;
   Item mData;
-  TPieces mpCurrPieces;
+  std::shared_ptr<TPieces> mpCurrPieces;
   std::mutex mlSubMutex;
   std::shared_ptr<TNode> mpParent;
 };
