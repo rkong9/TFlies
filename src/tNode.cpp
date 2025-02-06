@@ -3,6 +3,8 @@
 #include "logger.hpp"
 #include "utils.hpp"
 
+std::atomic<int64_t> TNode::mPieceNums = 0;
+
 void TNode::setData(const Item &item) {
   mData = item;
 }
@@ -228,5 +230,7 @@ int TNode::setTimePieces(std::shared_ptr<TPieces> &pieces) {
 
  mqPieces[pieces->serialNumber] = pieces;
  mPieceNums++;
+ pLogger->trace("task:{}, insert new pieces:{}, serial:{} ",
+    msID.getID(), pieces->piecesID, pieces->serialNumber);
  return 0;
 }

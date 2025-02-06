@@ -376,13 +376,16 @@ bool insertOrUpdateTask(sqlite3* db, const std::shared_ptr<TNode> &node) {
           sqlite3_bind_int64(stmt, 6, pPieces->endtime);
           sqlite3_bind_text(stmt, 7, pPieces->desc.c_str(), -1, SQLITE_STATIC);
           if (sqlite3_step(stmt) != SQLITE_DONE) {
-              pLogger->error("Failed to save pieces prepare statement:{}", sqlite3_errmsg(db));
+            char *errMsg = 0;
+            sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, &errMsg);
+            pLogger->error("Failed to save pieces prepare statement:{}", sqlite3_errmsg(db));
           } else {
             pLogger->trace("storage task pieces:{} to db success", pPieces->piecesID);
           }
-          sqlite3_finalize(stmt);
+          sqlite3_reset(stmt);
         }
       }
+      sqlite3_finalize(stmt);
       return true;
 
     } else if (node->mStatus < 0) { // delete node

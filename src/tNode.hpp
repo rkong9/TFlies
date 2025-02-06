@@ -53,7 +53,7 @@ private:
 public:
   std::deque<std::shared_ptr<TNode>> mqSubTNode;
   std::deque<std::shared_ptr<TPieces>> mqPieces;
-  std::atomic<int64_t> mPieceNums;
+  static std::atomic<int64_t> mPieceNums;
   int mStatus; // 0 normal, 1 updated, -1 deleted
 
 private:
