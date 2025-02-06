@@ -3,6 +3,7 @@
 #include <ctime>
 #include <string>
 
+std::string getDateStr(int64_t time_ms);
 std::string getTimeStr(int64_t time_ms);
 int64_t getCurrentTimeMs();
 bool isValidMonth(int month);

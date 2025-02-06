@@ -5,7 +5,7 @@
 #include <iomanip>
 #include <regex>
 
-std::string getTimeStr(int64_t time_ms) {
+std::string getDateStr(int64_t time_ms) {
   if (time_ms < 0) {
     return std::string("none");
   }
@@ -22,6 +22,29 @@ std::string getTimeStr(int64_t time_ms) {
   std::stringstream time_ss;
   time_ss << std::put_time(time_info, "%Y%m%d %H:%M:%S") << "+" << std::setw(3) << std::setfill('0') << ms;
   return time_ss.str();
+}
+
+std::string getTimeStr(int64_t time_ms) {
+  std::stringstream ss;
+  if (time_ms >= 3600000) {
+    int64_t h = time_ms / 3600000;
+    time_ms = time_ms % 3600000;
+    ss << std::to_string(h) << "h";
+  }
+  if (time_ms >= 60000) {
+    int min = time_ms / 60000;
+    time_ms = time_ms % 60000;
+    ss << min << "min";
+  }
+  if (time_ms >= 1000) {
+    int s = time_ms / 1000;
+    time_ms = time_ms % 1000;
+    ss << s << "s";
+  }
+  // if (time_ms > 0) {
+  //   ss << time_ms << "ms";
+  // }
+  return ss.str();
 }
 
 int64_t getCurrentTimeMs() {

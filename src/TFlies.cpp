@@ -568,12 +568,22 @@ int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
             << "  status:" << it.status << "\n"
             << "  priority:" << it.priority << "\n"
             << "  efficiency:" << it.efficiency << "\n"
-            << "  createTime:" << getTimeStr(it.createTime) << "\n"
-            << "  updateTime:" << getTimeStr(it.updateTime) << "\n"
-            << "  dueTime:" << getTimeStr(it.dueTime) << "\n"
-            << "  costTime:" << it.costTime << " ms\n"
-            << "  expectTime:" << it.expectTime << " ms\n"
+            << "  createTime:" << getDateStr(it.createTime) << "\n"
+            << "  updateTime:" << getDateStr(it.updateTime) << "\n"
+            << "  dueTime:" << getDateStr(it.dueTime) << "\n"
+            << "  costTime:" << getTimeStr(it.costTime) << "\n"
+            << "  expectTime:" << getTimeStr(it.expectTime) << "\n"
             << "  timePiecesTable:" << it.timePiecesTable << '\n';
+  for (auto &piece : node->mqPieces) {
+    std::cout << "   - PieceID:     " << piece->piecesID << "\n"
+              << "   - TaskID:      " << piece->taskID << "\n"
+              << "   - SerialNumber:" << piece->serialNumber << "\n"
+              << "   - Efficiency:  " << piece->efficiency << "\n"
+              << "   - BeginTime:   " << getDateStr(piece->begintime) << "\n"
+              << "   - EndTime:     " << getDateStr(piece->endtime) << "\n"
+              << "   - CostTime:    " << getTimeStr(piece->endtime - piece->begintime) << "\n"
+              << "   - Description: " << piece->desc << "\n";
+  }
   return 0;
 }
 
