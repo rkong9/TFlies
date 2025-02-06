@@ -61,13 +61,13 @@ bool createDefaultDatabase(const std::string& dbPath) {
 
     const char* createTimePiecesTableSQL =
         "CREATE TABLE IF NOT EXISTS TimePieces ("
-        "piecesID INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "taskID INTEGER, "
-        "serialNumber INTEGER, "
-        "efficiency INTEGER, "
-        "begintime INTEGER, "
-        "endtime INTEGER, "
-        "desc TEXT"
+        "PiecesID INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "TaskID INTEGER, "
+        "SerialNumber INTEGER, "
+        "Efficiency INTEGER, "
+        "BeginTime INTEGER, "
+        "EndTime INTEGER, "
+        "Description TEXT"
         ");";
 
     if (sqlite3_exec(db, createTimePiecesTableSQL, nullptr, nullptr, nullptr) != SQLITE_OK) {
@@ -212,6 +212,7 @@ bool loadOrCreateDatabase(const std::string& dbPath, std::unordered_map<int64_t,
           ptp->endtime = sqlite3_column_int64(stmt, 5);
           ptp->desc = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6)));
           mNode[ptp->taskID]->setTimePieces(ptp);
+          pLogger->trace("insert pieces:{},{} to task:{}", ptp->piecesID, ptp->serialNumber, ptp->taskID);
         }
       }
       sqlite3_finalize(stmt);
@@ -245,148 +246,20 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     showParser->add<int64_t>("ID", 'I', "task ID", true);
     mParser["show"] = showParser;
 
+    CmdParserPtr execTParser(new CmdParser);
+    execTParser->add<int64_t>("ID", 'I', "task ID", true);
+    mParser["execT"] = execTParser;
 
-    CmdParserPtr startParser(new CmdParser);
-    startParser->add<int64_t>("ID", 'I', "task ID", true);
-    mParser["start"] = startParser;
+    CmdParserPtr haltTParser(new CmdParser);
+    haltTParser->add<int64_t>("ID", 'I', "task ID", true);
+    haltTParser->add<int>("efficiency", 'e', "efficiency", false, 2);
+    haltTParser->add<std::string>("desc", 't', "pieces description", false, "None");
+    mParser["haltT"] = haltTParser;
 
-    CmdParserPtr stopParser(new CmdParser);
-    stopParser->add<int64_t>("ID", 'I', "task ID", true);
-    mParser["stop"] = stopParser;
-
-    CmdParserPtr doneParser(new CmdParser);
-    doneParser->add<int64_t>("ID", 'I', "task ID", true);
-    mParser["done"] = doneParser;
-}
-
-// 检查月份是否有效
-bool isValidMonth(int month) {
-    return month >= 1 && month <= 12;
-}
-
-// 检查日期是否有效
-bool isValidDay(int year, int month, int day) {
-    if (day < 1 || day > 31) return false;
-
-    // 检查月份对应的日期
-    if (month == 4 || month == 6 || month == 9 || month == 11) {
-        return day <= 30; // 4 月、6 月、9 月、11 月最多 30 天
-    } else if (month == 2) {
-        // 检查闰年
-        bool isLeapYear = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-        return day <= (isLeapYear ? 29 : 28); // 2 月最多 28 或 29 天
-    } else {
-        return day <= 31; // 其他月份最多 31 天
-    }
-}
-
-// 检查时间值是否有效
-bool isValidTime(int hour, int minute, int second, int milliseconds) {
-    return (hour >= 0 && hour <= 23) &&
-           (minute >= 0 && minute <= 59) &&
-           (second >= 0 && second <= 59) &&
-           (milliseconds >= 0 && milliseconds <= 999);
-}
-
-bool isFutureTime(const std::tm& tm, int milliseconds) {
-    auto now = std::chrono::system_clock::now();
-    auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()).count();
-
-    std::time_t time = std::mktime(const_cast<std::tm*>(&tm));
-    auto inputMs = time * 1000 + milliseconds;
-
-    // 比较时间戳
-    return inputMs > nowMs;
-}
-
-int64_t timeParserDate(const std::string &timeStr) {
-    std::regex pattern(R"((\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\+(\d{3}))");
-    std::smatch match;
-
-    int64_t finalTimestamp(-1);
-    do {
-      if (std::regex_match(timeStr, match, pattern)) {
-          int year = std::stoi(match[1]);
-          int month = std::stoi(match[2]);
-          int day = std::stoi(match[3]);
-          int hour = std::stoi(match[4]);
-          int minute = std::stoi(match[5]);
-          int second = std::stoi(match[6]);
-          int milliseconds = std::stoi(match[7]);
-
-          // 检查时间值的有效性
-          if (!isValidMonth(month)) {
-              pLogger->warn("invalid month:{}", month);
-              break;
-          }
-          if (!isValidDay(year, month, day)) {
-              pLogger->warn("invalid day:{}", day);
-              break;
-          }
-          if (!isValidTime(hour, minute, second, milliseconds)) {
-              pLogger->warn("invalid time:{}h, {}m, {}s, {}ms",
-              hour, minute, second, milliseconds);
-              break;
-          }
-
-          // 构造 tm 结构体
-          std::tm tm = {};
-          tm.tm_year = year - 1900; // tm_year 是从 1900 开始的年份
-          tm.tm_mon = month - 1;    // tm_mon 是从 0 开始的月份
-          tm.tm_mday = day;
-          tm.tm_hour = hour;
-          tm.tm_min = minute;
-          tm.tm_sec = second;
-
-          // 检查时间是否大于当前时间
-          if (!isFutureTime(tm, milliseconds)) {
-              pLogger->warn("Time is not in the future");
-              break;
-          }
-
-          // 将 tm 转换为 time_t（秒级时间戳）
-          std::time_t time = std::mktime(&tm);
-
-          // 转换为 chrono::system_clock::time_point
-          auto timePoint = std::chrono::system_clock::from_time_t(time);
-
-          // 加上毫秒部分
-          timePoint += std::chrono::milliseconds(milliseconds);
-
-          // 计算时间戳（从 1970-01-01 开始的毫秒数）
-          finalTimestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-              timePoint.time_since_epoch()).count();
-      } else {
-        pLogger->warn("invalid time format:{}, should:yyyymmdd-hhmmss+xxx");
-      }
-    } while(0);
-    return finalTimestamp;
-}
-
-int64_t timeParserValue(const std::string &str) {
-  std::regex time_pattern(R"(^\d+(ms|s|min|h))");
-  int64_t finalTime(-1);
-  if (std::regex_match(str, time_pattern)) {
-    // get digits
-    size_t idx(0);
-    while(idx < str.length()) {
-      if (!std::isdigit(str[idx])) {
-        break;
-      }
-      idx++;
-    }
-    finalTime = std::atol(str.substr(0, idx).c_str());
-    std::string unit = str.substr(idx);
-    if (unit == "s") { 
-      finalTime *= 1000;
-    } else if (unit == "min") {
-      finalTime *= 1000 * 60;
-    } else if (unit == "h") {
-      finalTime *= 1000 * 60 * 60;
-    }
-  }
-  return finalTime;
+    CmdParserPtr setStatusParser(new CmdParser);
+    setStatusParser->add<int64_t>("ID", 'I', "task ID", true);
+    setStatusParser->add<int>("status", 's', "task status", true);
+    mParser["set_status"] = setStatusParser;
 }
 
 
@@ -443,7 +316,8 @@ int createT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
 }
 
 bool insertOrUpdateTask(sqlite3* db, const std::shared_ptr<TNode> &node) {
-    if (node->actionMode > 0) {
+    const Item &ti = node->getData();
+    if (node->mStatus > 0) {
       // 构造 SQL 语句
       std::string sql = "INSERT OR REPLACE INTO Tasks (TaskID, Name, ParentTaskID, Status, Priority, CreateTime, "
                         "UpdateTime, DueTime, CostTime, ExpectTime, Efficiency, TimePiecesTable, Description) "
@@ -456,7 +330,6 @@ bool insertOrUpdateTask(sqlite3* db, const std::shared_ptr<TNode> &node) {
           return false;
       }
 
-      const Item &it = node.getData();
       // 绑定参数
       sqlite3_bind_int64(stmt, 1, ti.taskID);
       sqlite3_bind_text(stmt, 2, ti.name.c_str(), -1, SQLITE_STATIC);
@@ -497,22 +370,22 @@ bool insertOrUpdateTask(sqlite3* db, const std::shared_ptr<TNode> &node) {
         if (pPieces && pPieces->status > 0) {
           sqlite3_bind_int64(stmt, 1, pPieces->piecesID);
           sqlite3_bind_int64(stmt, 2, pPieces->taskID);
-          sqlite3_bind_int(stmt, 3, pPiece->serialNumber);
-          sqlite3_bind_int(stmt, 4, pPiece->efficiency);
+          sqlite3_bind_int(stmt, 3, pPieces->serialNumber);
+          sqlite3_bind_int(stmt, 4, pPieces->efficiency);
           sqlite3_bind_int64(stmt, 5, pPieces->begintime);
           sqlite3_bind_int64(stmt, 6, pPieces->endtime);
           sqlite3_bind_text(stmt, 7, pPieces->desc.c_str(), -1, SQLITE_STATIC);
           if (sqlite3_step(stmt) != SQLITE_DONE) {
               pLogger->error("Failed to save pieces prepare statement:{}", sqlite3_errmsg(db));
-              sqlite3_finalize(stmt);
-              continue;
+          } else {
+            pLogger->trace("storage task pieces:{} to db success", pPieces->piecesID);
           }
           sqlite3_finalize(stmt);
         }
       }
       return true;
 
-    } else if (actionMode < 0) { // delete node
+    } else if (node->mStatus < 0) { // delete node
       char *errMsg = 0;
       std::string sql = "DELETE FROM Tasks WHERE TaskID = " + std::to_string(ti.taskID) + ";";
       int rc = sqlite3_exec(db, sql.c_str(), 0, 0, &errMsg);
@@ -622,15 +495,17 @@ void listAllT(std::shared_ptr<TNode> pNode, std::function<bool(std::shared_ptr<T
 
     auto it = pTempNode->getData();
     if (filter(pTempNode)) {
-        std::cout << "+" << it.taskID << " " << it.name << '\n';
+      std::cout << "+";
     } else {
-        std::cout << "-" << it.taskID << " " << it.name << '\n';
+      std::cout << "-";
       for (auto it = pTempNode->mqSubTNode.rbegin(); it != pTempNode->mqSubTNode.rend(); it++) {
         if ((*it)->mStatus >= 0) {
           spNode.push(*it);
         }
       }
     }
+    std::cout << it.taskID << " " << "[" << TStatusToStrS(it.status) << "] "
+              << it.name << " (" << pTempNode->mqPieces.size() << " pieces)\n";
   }
 }
 
@@ -667,12 +542,6 @@ int listT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
   return 0;
 }
 
-int selectT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
-    std::unordered_map<int64_t, TNodePtr> &mNode) {
-
-  return 0;
-}
-
 int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
     std::unordered_map<int64_t, TNodePtr> &mNode) {
   pParser->parse(v_args);
@@ -705,33 +574,66 @@ int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
   return 0;
 }
 
-int startT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args) {
+int selectT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
+    std::unordered_map<int64_t, TNodePtr> &mNode) {
+  return 0;
+}
+
+int execT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
+  std::unordered_map<int64_t, TNodePtr> &mNode) {
   pParser->parse(v_args);
-  if (!pParser->parse(v_args) || pParser->exist("help")) {
+  if (!pParser->parse(v_args)) {
     std::cout << "parse startT cmd arguments failed, usage:" << pParser->usage()
               << std::endl;
     return -1;
   }
+  int64_t id = pParser->get<int64_t>("ID");
+  if (mNode.find(id) == mNode.end()) {
+    pLogger->warn("cannot find node:{}", id);
+    return -1;
+  }
+  TNodePtr node = mNode[id];
+  node->exe_start();
+
   return 0;
 }
 
-int stopT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args) {
+int haltT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
+  std::unordered_map<int64_t, TNodePtr> &mNode) {
   pParser->parse(v_args);
-  if (!pParser->parse(v_args) || pParser->exist("help")) {
-    std::cout << "parse stopT cmd arguments failed, usage:" << pParser->usage()
+  if (!pParser->parse(v_args)) {
+    std::cout << "parse haltT cmd arguments failed, usage:" << pParser->usage()
               << std::endl;
     return -1;
   }
+  int64_t id = pParser->get<int64_t>("ID");
+  if (mNode.find(id) == mNode.end()) {
+    pLogger->warn("cannot find node:{}", id);
+    return -1;
+  }
+  TNodePtr node = mNode[id];
+  std::string desc = pParser->get<std::string>("desc");
+  uint8_t efficiency = pParser->get<int>("efficiency");
+  node->exe_halt(desc, efficiency);
   return 0;
 }
 
-int doneT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args) {
+int setStatusOfT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
+  std::unordered_map<int64_t, TNodePtr> &mNode) {
+
   pParser->parse(v_args);
-  if (!pParser->parse(v_args) || pParser->exist("help")) {
+  if (!pParser->parse(v_args)) {
     std::cout << "parse doneT cmd arguments failed, usage:" << pParser->usage()
               << std::endl;
     return -1;
   }
+  int64_t id = pParser->get<int64_t>("ID");
+  if (mNode.find(id) == mNode.end()) {
+    pLogger->warn("cannot find node:{}", id);
+    return -1;
+  }
+  TNodePtr node = mNode[id];
+
   return 0;
 }
 
@@ -751,6 +653,7 @@ int main(int argc, char **argv) {
     Item rIt;
     rIt.name = "root";
     std::shared_ptr<TNode> pRootNode(new TNode(rIt, SID(0)));
+    std::shared_ptr<TNode> pSelectedNode(pRootNode);
     std::unordered_map<int64_t, TNodePtr> mNode;
     mNode[pRootNode->getID()] = pRootNode;
     pLogger->debug("create root node success, id:{}", pRootNode->getID());
@@ -811,8 +714,9 @@ int main(int argc, char **argv) {
         }
 
         std::stringstream ss;
+        ss << "get buff:";
         for (auto &buff : vBuff) {
-             ss << "get buff:\"" << buff << "\"  ";
+             ss << " \"" << buff << "\"  ";
         }
         pLogger->debug("{}", ss.str());
 
@@ -833,8 +737,18 @@ int main(int argc, char **argv) {
         } else if (vBuff[0] == "show") {
           pLogger->info("get show task cmd");
           showT(gmCmdParser["show"], vBuff, mNode);
+        } else if (vBuff[0] == "set_status") {
+          pLogger->info("get set task status cmd");
+          setStatusOfT(gmCmdParser["set_status"], vBuff, mNode);
+        } else if (vBuff[0] == "execT") {
+          pLogger->info("get execT cmd");
+          execT(gmCmdParser["execT"], vBuff, mNode);
+        } else if (vBuff[0] == "haltT") {
+          pLogger->info("get haltT cmd");
+          haltT(gmCmdParser["haltT"], vBuff, mNode);
+        } else {
+          pLogger->warn("get unknown cmd:{}", vBuff[0]);
         }
-
     }
     return 0;
 }

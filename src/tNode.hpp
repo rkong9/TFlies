@@ -41,11 +41,11 @@ public:
   // void deleteSelfFromTree();
 
   int exe_start();
-  int exe_stop(const std::string &desc, uint8_t efficiency);
+  int exe_halt(const std::string &desc, uint8_t efficiency);
 
-  int start();
-  int pause();
-  int done();
+  int setTaskStatus(uint8_t status);
+  int setTaskDesc(const std::string &desc);
+  int setTaskEfficiency(uint8_t effic);
 
 private:
   int updateValue();

@@ -114,7 +114,7 @@ int TNode::exe_start() {
   return 0;
 }
 
-int TNode::exe_stop(const std::string &desc, uint8_t efficiency) {
+int TNode::exe_halt(const std::string &desc, uint8_t efficiency) {
   if (mStatus < 0) {
     return -1;
   }
@@ -132,41 +132,52 @@ int TNode::exe_stop(const std::string &desc, uint8_t efficiency) {
   mpCurrPieces->efficiency = efficiency;
   mpCurrPieces->status = 1;
   mqPieces.push_back(mpCurrPieces);
-  mpCurrPieces = nullptr;
+  mPieceNums++;
+  pLogger->debug("insert pieces success, nums:{}, mPieceNums:{}",
+    mqPieces.size(), mPieceNums.load());
 
   int64_t costTime = mpCurrPieces->endtime - mpCurrPieces->begintime;
   mData.costTime += costTime;
   mData.updateTime = mpCurrPieces->endtime;
 
+  mpCurrPieces = nullptr;
+
   return 0;
 }
 
-int TNode::start() {
+int TNode::setTaskStatus(uint8_t status) {
   if (mStatus < 0) {
     pLogger->warn("this node is already abandon");
     return -1;
   }
   mStatus = 1;
-  mData.status = static_cast<uint8_t>(TaskStatus::INPROGRESS);
+  if (status <= static_cast<uint8_t>(TaskStatus::DONE) &&
+    status >= static_cast<uint8_t>(TaskStatus::TODO)) {
+    mData.status = status;
+  } else {
+    pLogger->warn("invalid target status:{}", status);
+    return -1;
+  }
+  return 0;
 }
 
-int TNode::pause() {
+int TNode::setTaskDesc(const std::string &desc) {
   if (mStatus < 0) {
     pLogger->warn("this node is already abandon");
     return -1;
   }
-  mStatus = 1;
-  mData.status = static_cast<uint8_t>(TaskStatus::PAUSE);
+  mData.desc = desc;
+  pLogger->trace("set new desc:{} to task:{}", desc, msID.getID());
+  return 0;
 }
 
-int TNode::done() {
+int TNode::setTaskEfficiency(uint8_t effic) {
   if (mStatus < 0) {
     pLogger->warn("this node is already abandon");
     return -1;
   }
-  mStatus = 1;
-  mData.status = static_cast<uint8_t>(TaskStatus::DONE);
-
+  mData.efficiency = effic;
+  pLogger->trace("set new effic:{} to task:{}", effic, msID.getID());
   return 0;
 }
 
@@ -206,7 +217,8 @@ int TNode::setTimePieces(std::shared_ptr<TPieces> &pieces) {
  }
 
  if (pieces->serialNumber >= mqPieces.size()) {
-    mqPieces.resize(pieces->serialNumber);
+    mqPieces.resize(pieces->serialNumber + 1);
+    mqPieces[pieces->serialNumber] = nullptr;
  }
 
  if (mqPieces[pieces->serialNumber]) {
