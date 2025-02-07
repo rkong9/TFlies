@@ -54,8 +54,11 @@ const std::shared_ptr<TNode> TNode::createSubNode(Item &item, int index) {
 
       subSID = msID.createNewID(newIndex);
       if (subSID.isValid()) {
-        item.createTime = getCurrentTimeMs();
-        item.updateTime = item.createTime;
+        int64_t nowTime = getCurrentTimeMs();
+        if (item.createTime <= 0) {
+          item.createTime = nowTime;
+        }
+        item.updateTime = nowTime;
         item.taskID = subSID.getID();
         pSubNode = std::make_shared<TNode>(item, subSID);
         if (newIndex < subNodes) {

@@ -268,7 +268,7 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     updateTParser->add<std::string>("description", 't', "task description", false, "None");
     updateTParser->add<std::string>("expectTime", 'e', "task expect time(ms/s/m/h)", false, "30m");
     updateTParser->add<int>("priority", 'p', "task priority", false, 1);
-    mParser["updateT"] = updateTParser;
+    mParser["update"] = updateTParser;
 
     CmdParserPtr moveTParser(new CmdParser);
     moveTParser->add<int64_t>("srcID", 's', "source task ID", true);
@@ -289,6 +289,11 @@ int moveT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
   if (mNode.find(sID) == mNode.end() || mNode.find(tID) == mNode.end()) {
     pLogger->error("invalid srcID:{} or targetID:{}", sID, tID);
     return -1;
+  }
+
+  if (SID::getParentID(sID) == tID) {
+    pLogger->warn("this not is already at the target location");
+    return 1;
   }
 
   TNodePtr sNode = mNode[sID];
@@ -890,9 +895,9 @@ int main(int argc, char **argv) {
         } else if (vBuff[0] == "halt") {
           pLogger->info("get halt cmd");
           haltT(gmCmdParser["halt"], vBuff, mNode);
-        } else if (vBuff[0] == "updateT") {
-          pLogger->info("get updateT cmd");
-          updateT(gmCmdParser["updateT"], vBuff, mNode);
+        } else if (vBuff[0] == "update") {
+          pLogger->info("get update cmd");
+          updateT(gmCmdParser["update"], vBuff, mNode);
         } else if (vBuff[0] == "move") {
           pLogger->info("get move cmd");
           moveT(gmCmdParser["move"], vBuff, mNode);

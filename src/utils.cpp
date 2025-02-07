@@ -153,7 +153,7 @@ int64_t timeParserDate(const std::string &timeStr) {
           finalTimestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
               timePoint.time_since_epoch()).count();
       } else {
-        pLogger->warn("invalid time format:{}, should:yyyymmdd-hhmmss+xxx");
+        pLogger->warn("invalid time format:{}, should:yyyymmdd-hhmmss+xxx", timeStr);
       }
     } while(0);
     return finalTimestamp;
