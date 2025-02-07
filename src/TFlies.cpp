@@ -384,6 +384,7 @@ int createT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
 bool insertOrUpdateTask(sqlite3* db, const std::shared_ptr<TNode> &node) {
     const Item &ti = node->getData();
     if (node->mStatus > 0) {
+      node->exe_halt("None", 3, true);
       // 构造 SQL 语句
       std::string sql = "INSERT OR REPLACE INTO Tasks (TaskID, Name, ParentTaskID, Status, Priority, CreateTime, "
                         "UpdateTime, DueTime, CostTime, ExpectTime, Efficiency, TimePiecesTable, Description) "

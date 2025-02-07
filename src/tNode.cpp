@@ -123,13 +123,17 @@ int TNode::exe_start() {
   return 0;
 }
 
-int TNode::exe_halt(const std::string &desc, uint8_t efficiency) {
+int TNode::exe_halt(const std::string &desc, uint8_t efficiency, bool nowarn) {
   if (mStatus < 0) {
     return -1;
   }
 
   if (!mpCurrPieces) {
-    pLogger->warn("this node is already stoped");
+    if (!nowarn) {
+      pLogger->warn("this node is already stoped");
+    } else {
+      pLogger->debug("this node is already stoped");
+    }
     return 1;
   }
   mStatus = 1;
