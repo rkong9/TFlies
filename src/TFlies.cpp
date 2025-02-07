@@ -248,13 +248,13 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
 
     CmdParserPtr execTParser(new CmdParser);
     execTParser->add<int64_t>("ID", 'I', "task ID", true);
-    mParser["execT"] = execTParser;
+    mParser["exec"] = execTParser;
 
     CmdParserPtr haltTParser(new CmdParser);
     haltTParser->add<int64_t>("ID", 'I', "task ID", true);
     haltTParser->add<int>("efficiency", 'e', "efficiency", false, 2);
     haltTParser->add<std::string>("desc", 't', "pieces description", false, "None");
-    mParser["haltT"] = haltTParser;
+    mParser["halt"] = haltTParser;
 
     CmdParserPtr setStatusParser(new CmdParser);
     setStatusParser->add<int64_t>("ID", 'I', "task ID", true);
@@ -269,8 +269,60 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     updateTParser->add<std::string>("expectTime", 'e', "task expect time(ms/s/m/h)", false, "30m");
     updateTParser->add<int>("priority", 'p', "task priority", false, 1);
     mParser["updateT"] = updateTParser;
+
+    CmdParserPtr moveTParser(new CmdParser);
+    moveTParser->add<int64_t>("srcID", 's', "source task ID", true);
+    moveTParser->add<int64_t>("targetID", 't', "target task ID(new parent node)", true);
+    mParser["move"] = moveTParser;
 }
 
+int moveT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
+  std::unordered_map<int64_t, TNodePtr> &mNode) {
+  if (!pParser->parse(vArgs)) {
+    std::cout << "parse move cmd arguments failed, " << pParser->usage()
+              << std::endl;
+    return -1;
+  }
+  int64_t sID = pParser->get<int64_t>("srcID");
+  int64_t tID = pParser->get<int64_t>("targetID");
+
+  if (mNode.find(sID) == mNode.end() || mNode.find(tID) == mNode.end()) {
+    pLogger->error("invalid srcID:{} or targetID:{}", sID, tID);
+    return -1;
+  }
+
+  TNodePtr sNode = mNode[sID];
+  TNodePtr npNode = mNode[tID];
+
+  std::stack<TNodePtr> srcStack;
+  std::stack<TNodePtr> targetStack;
+  srcStack.push(sNode);
+  targetStack.push(npNode);
+
+  while(!srcStack.empty()) {
+    TNodePtr tempNode = srcStack.top();
+    TNodePtr newPNode = targetStack.top();
+    srcStack.pop();
+    targetStack.pop();
+
+    Item it = tempNode->getData();
+    TNodePtr newNode = newPNode->createSubNode(it);
+    tempNode->mStatus = -1;
+    newNode->mqPieces = std::move(tempNode->mqPieces);
+    mNode[newNode->getID()] = newNode;
+    for (auto &pieces : newNode->mqPieces) {
+      pieces->taskID = newNode->getID();
+      pieces->status = 1;
+    }
+
+    for (auto it = tempNode->mqSubTNode.rbegin(); it != tempNode->mqSubTNode.rend(); it++) {
+      srcStack.push(*it);
+      targetStack.push(newNode);
+    }
+  }
+
+  return 0;
+}
 
 int createT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
   std::unordered_map<int64_t, TNodePtr> &mNode) {
@@ -437,6 +489,10 @@ int storeToDb(const std::string &dbPath, const TNodePtr &pNode) {
   while(!spNode.empty()) {
     std::shared_ptr<TNode> pTempNode = spNode.top();
     spNode.pop();
+    if (!pTempNode) {
+      continue;
+    }
+
     if (insertOrUpdateTask(db, pTempNode)) {
       pLogger->trace("Success to insert or update task:{}", pTempNode->getID());
       for (auto it = pTempNode->mqSubTNode.rbegin(); it != pTempNode->mqSubTNode.rend(); it++) {
@@ -555,13 +611,17 @@ void listAllT(std::shared_ptr<TNode> pNode, std::function<bool(std::shared_ptr<T
         std::cout << " | ";
     }
 
+    if (pTempNode->mStatus < 0) {
+      continue;
+    }
+
     auto it = pTempNode->getData();
     if (filter(pTempNode)) {
       std::cout << "+";
     } else {
       std::cout << "-";
       for (auto it = pTempNode->mqSubTNode.rbegin(); it != pTempNode->mqSubTNode.rend(); it++) {
-        if ((*it)->mStatus >= 0) {
+        if ((*it) && (*it)->mStatus >= 0) {
           spNode.push(*it);
         }
       }
@@ -625,9 +685,9 @@ int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
             << "  parentID:" << WHITE << it.parentTaskID << RESET << "\n"
             << "  name:" << GREEN << it.name << RESET << "\n"
             << "  description:" << BLUE << it.desc << RESET << "\n"
-            << "  status:" << getColors(it.status) << it.status << RESET << "\n"
-            << "  priority:" << it.priority << "\n"
-            << "  efficiency:" << GREEN << it.efficiency << RESET << "\n"
+            << "  status:" << getColors(it.status) << std::to_string(it.status) << RESET << "\n"
+            << "  priority:" << std::to_string(it.priority) << "\n"
+            << "  efficiency:" << GREEN << std::to_string(it.efficiency) << RESET << "\n"
             << "  createTime:" << MAGENTA << getDateStr(it.createTime) << RESET << "\n"
             << "  updateTime:" << GREEN << getDateStr(it.updateTime) << RESET << "\n"
             << "  dueTime:" << RED << getDateStr(it.dueTime) << RESET << "\n"
@@ -640,7 +700,7 @@ int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
       std::cout << "   - " << WHITE << piece->piecesID << ", "
                 << piece->taskID << ", "
                 << piece->serialNumber << ", "
-                << piece->efficiency << ", "
+                << std::to_string(piece->efficiency) << ", "
                 << getDateStr(piece->begintime) << ", "
                 << getDateStr(piece->endtime) << ", "
                 << getTimeStr(piece->endtime - piece->begintime) << ", "
@@ -659,7 +719,7 @@ int execT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
   std::unordered_map<int64_t, TNodePtr> &mNode) {
   pParser->parse(v_args);
   if (!pParser->parse(v_args)) {
-    std::cout << "parse startT cmd arguments failed, usage:" << pParser->usage()
+    std::cout << "parse exec cmd arguments failed, usage:" << pParser->usage()
               << std::endl;
     return -1;
   }
@@ -678,7 +738,7 @@ int haltT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
   std::unordered_map<int64_t, TNodePtr> &mNode) {
   pParser->parse(v_args);
   if (!pParser->parse(v_args)) {
-    std::cout << "parse haltT cmd arguments failed, usage:" << pParser->usage()
+    std::cout << "parse halt cmd arguments failed, usage:" << pParser->usage()
               << std::endl;
     return -1;
   }
@@ -824,15 +884,18 @@ int main(int argc, char **argv) {
         } else if (vBuff[0] == "set_status") {
           pLogger->info("get set task status cmd");
           setStatusOfT(gmCmdParser["set_status"], vBuff, mNode);
-        } else if (vBuff[0] == "execT") {
-          pLogger->info("get execT cmd");
-          execT(gmCmdParser["execT"], vBuff, mNode);
-        } else if (vBuff[0] == "haltT") {
-          pLogger->info("get haltT cmd");
-          haltT(gmCmdParser["haltT"], vBuff, mNode);
+        } else if (vBuff[0] == "exec") {
+          pLogger->info("get exec cmd");
+          execT(gmCmdParser["exec"], vBuff, mNode);
+        } else if (vBuff[0] == "halt") {
+          pLogger->info("get halt cmd");
+          haltT(gmCmdParser["halt"], vBuff, mNode);
         } else if (vBuff[0] == "updateT") {
           pLogger->info("get updateT cmd");
           updateT(gmCmdParser["updateT"], vBuff, mNode);
+        } else if (vBuff[0] == "move") {
+          pLogger->info("get move cmd");
+          moveT(gmCmdParser["move"], vBuff, mNode);
         }
         else if (vBuff[0] == "help") {
           for (auto &pair : gmCmdParser) {

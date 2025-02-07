@@ -85,6 +85,7 @@ const std::shared_ptr<TNode> TNode::createSubNode(Item &item, int index) {
       }
     }
   }
+  pSubNode->mStatus = 1;
   return pSubNode;
 }
 
