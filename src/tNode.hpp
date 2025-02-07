@@ -22,7 +22,7 @@ public:
     mStatus = 0;
   }
   ~TNode() {}
-  void setData(const Item &item);
+  void setData(const Item &item, bool update=false);
   void setID(const SID &sid);
   void setParentNode(std::shared_ptr<TNode> &pParent);
   const std::shared_ptr<TNode> &getParentNode() {

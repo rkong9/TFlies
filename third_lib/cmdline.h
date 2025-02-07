@@ -385,6 +385,14 @@ public:
     return others;
   }
 
+  bool reset() {
+    for (std::map<std::string, option_base*>::iterator p=options.begin();
+         p!=options.end(); p++) {
+      p->second->reset();
+    }
+    return true;
+  }
+
   bool parse(const std::string &arg){
     std::vector<std::string> args;
 
@@ -428,6 +436,7 @@ public:
   }
 
   bool parse(const std::vector<std::string> &args){
+    reset();
     int argc=static_cast<int>(args.size());
     std::vector<const char*> argv(argc);
 
@@ -438,6 +447,7 @@ public:
   }
 
   bool parse(int argc, const char * const argv[]){
+    reset();
     errors.clear();
     others.clear();
 
@@ -644,6 +654,7 @@ private:
     virtual bool has_set() const=0;
     virtual bool valid() const=0;
     virtual bool must() const=0;
+    virtual void reset() =0;
 
     virtual const std::string &name() const=0;
     virtual char short_name() const=0;
@@ -697,6 +708,10 @@ private:
 
     std::string short_description() const{
       return "--"+nam;
+    }
+
+    void reset() {
+      has = false;
     }
 
   private:
@@ -768,6 +783,11 @@ private:
 
     std::string short_description() const{
       return "--"+nam+"="+detail::readable_typename<T>();
+    }
+
+    void reset() {
+      actual=def;
+      has = false;
     }
 
   protected:

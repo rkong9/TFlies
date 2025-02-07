@@ -258,8 +258,17 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
 
     CmdParserPtr setStatusParser(new CmdParser);
     setStatusParser->add<int64_t>("ID", 'I', "task ID", true);
-    setStatusParser->add<int>("status", 's', "task status", true);
+    setStatusParser->add<std::string>("status", 's', "task status, start/stop/done", true);
     mParser["set_status"] = setStatusParser;
+
+    CmdParserPtr updateTParser(new CmdParser);
+    updateTParser->add<int64_t>("ID", 'I', "task ID", true);
+    updateTParser->add<std::string>("name", 'n', "task name", false, "None");
+    updateTParser->add<std::string>("dueDate", 'd', "task due date", false, "None");
+    updateTParser->add<std::string>("description", 't', "task description", false, "None");
+    updateTParser->add<std::string>("expectTime", 'e', "task expect time(ms/s/m/h)", false, "30m");
+    updateTParser->add<int>("priority", 'p', "task priority", false, 1);
+    mParser["updateT"] = updateTParser;
 }
 
 
@@ -398,7 +407,6 @@ bool insertOrUpdateTask(sqlite3* db, const std::shared_ptr<TNode> &node) {
           return false;
       } else {
           pLogger->trace("delete task:{} from db success", ti.taskID);
-          return true;
       }
 
       std::string sql_pieces = "DELETE FROM TimePieces WHERE TaskID = " + std::to_string(ti.taskID) + ";";
@@ -409,7 +417,6 @@ bool insertOrUpdateTask(sqlite3* db, const std::shared_ptr<TNode> &node) {
           return false;
       } else {
           pLogger->trace("delete task pieces:{} from TimePieces success", ti.taskID);
-          return true;
       }
     }
     return true;
@@ -482,6 +489,58 @@ int deleteT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
   return 0;
 }
 
+int updateT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
+    std::unordered_map<int64_t, TNodePtr> &mNode) {
+  pParser->parse(v_args);
+  if (!pParser->parse(v_args)) {
+    std::cout << "parse updateT cmd arguments failed, usage:" << pParser->usage()
+              << std::endl;
+    return -1;
+  }
+  int64_t id = pParser->get<int64_t>("ID");
+  pLogger->debug("start to update task:{}", id);
+
+  if (mNode.find(id) == mNode.end()) {
+    pLogger->trace("cannot to find task:{}", id);
+    return -2;
+  }
+  TNodePtr node = mNode[id];
+  Item it = node->getData();
+
+  bool update(false);
+  if (pParser->exist("name")) {
+    it.name = pParser->get<std::string>("name");
+    update = true;
+  }
+  if (pParser->exist("dueDate")) {
+    std::string dueDateStr = pParser->get<std::string>("dueDate");
+    it.dueTime = timeParserDate(dueDateStr);
+    update = true;
+  }
+
+  if (pParser->exist("description")) {
+    it.desc = pParser->get<std::string>("description");
+    update = true;
+  }
+
+  if (pParser->exist("expectTime")) {
+    std::string eTimeStr = pParser->get<std::string>("expectTime");
+    it.expectTime = timeParserValue(eTimeStr);
+    update = true;
+  }
+
+  if (pParser->exist("priority")) {
+    it.priority = pParser->get<int>("priority");
+    update = true;
+  }
+
+  if (update) {
+    node->setData(it, true);
+  }
+
+  return 0;
+}
+
 void listAllT(std::shared_ptr<TNode> pNode, std::function<bool(std::shared_ptr<TNode>)> filter) {
   // for 
   // std::stringstream ss;
@@ -508,7 +567,8 @@ void listAllT(std::shared_ptr<TNode> pNode, std::function<bool(std::shared_ptr<T
       }
     }
     std::cout << it.taskID << " " << "[" << TStatusToStrS(it.status) << "] "
-              << it.name << " (" << pTempNode->mqPieces.size() << " pieces)\n";
+              << getColors(it.status) << it.name << " (" << pTempNode->mqPieces.size() << " pieces)"
+              << RESET << "\n";
   }
 }
 
@@ -561,28 +621,31 @@ int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
   TNodePtr node = mNode[id];
   const Item &it = node->getData();
 
-  std::cout << "- taskID:" << it.taskID << "\n"
-            << "  parentID:" << it.parentTaskID << "\n"
-            << "  name:" << it.name << "\n"
-            << "  description:" << it.desc << "\n"
-            << "  status:" << it.status << "\n"
+  std::cout << "- taskID:" << WHITE << it.taskID << RESET << "\n"
+            << "  parentID:" << WHITE << it.parentTaskID << RESET << "\n"
+            << "  name:" << GREEN << it.name << RESET << "\n"
+            << "  description:" << BLUE << it.desc << RESET << "\n"
+            << "  status:" << getColors(it.status) << it.status << RESET << "\n"
             << "  priority:" << it.priority << "\n"
-            << "  efficiency:" << it.efficiency << "\n"
-            << "  createTime:" << getDateStr(it.createTime) << "\n"
-            << "  updateTime:" << getDateStr(it.updateTime) << "\n"
-            << "  dueTime:" << getDateStr(it.dueTime) << "\n"
-            << "  costTime:" << getTimeStr(it.costTime) << "\n"
-            << "  expectTime:" << getTimeStr(it.expectTime) << "\n"
+            << "  efficiency:" << GREEN << it.efficiency << RESET << "\n"
+            << "  createTime:" << MAGENTA << getDateStr(it.createTime) << RESET << "\n"
+            << "  updateTime:" << GREEN << getDateStr(it.updateTime) << RESET << "\n"
+            << "  dueTime:" << RED << getDateStr(it.dueTime) << RESET << "\n"
+            << "  costTime:" << BLUE << getTimeStr(it.costTime) << RESET << "\n"
+            << "  expectTime:" << GREEN << getTimeStr(it.expectTime) << RESET << "\n"
             << "  timePiecesTable:" << it.timePiecesTable << '\n';
-  for (auto &piece : node->mqPieces) {
-    std::cout << "   - PieceID:     " << piece->piecesID << "\n"
-              << "   - TaskID:      " << piece->taskID << "\n"
-              << "   - SerialNumber:" << piece->serialNumber << "\n"
-              << "   - Efficiency:  " << piece->efficiency << "\n"
-              << "   - BeginTime:   " << getDateStr(piece->begintime) << "\n"
-              << "   - EndTime:     " << getDateStr(piece->endtime) << "\n"
-              << "   - CostTime:    " << getTimeStr(piece->endtime - piece->begintime) << "\n"
-              << "   - Description: " << piece->desc << "\n";
+  if (node->mqPieces.size() > 0) {
+    std::cout << WHITE << "   + PieceID, TaskID, SerialID, Effic, BegTime, EndTime, CostTime, Desc" << WHITE << '\n';
+    for (auto &piece : node->mqPieces) {
+      std::cout << "   - " << WHITE << piece->piecesID << ", "
+                << piece->taskID << ", "
+                << piece->serialNumber << ", "
+                << piece->efficiency << ", "
+                << getDateStr(piece->begintime) << ", "
+                << getDateStr(piece->endtime) << ", "
+                << getTimeStr(piece->endtime - piece->begintime) << ", "
+                << piece->desc << RESET << "\n";
+    }
   }
   return 0;
 }
@@ -641,13 +704,21 @@ int setStatusOfT(const CmdParserPtr &pParser, const std::vector<std::string> &v_
     return -1;
   }
   int64_t id = pParser->get<int64_t>("ID");
+  std::string status = pParser->get<std::string>("status");
   if (mNode.find(id) == mNode.end()) {
     pLogger->warn("cannot find node:{}", id);
     return -1;
   }
   TNodePtr node = mNode[id];
-
-  return 0;
+  int istatus(-1);
+  if (status == "start") {
+    istatus = 1; //inprogress
+  } else if (status == "stop") {
+    istatus = 2; // pause
+  } else if (status == "done") {
+    istatus = 3;
+  }
+  return node->setTaskStatus(istatus);
 }
 
 int main(int argc, char **argv) {
@@ -759,6 +830,16 @@ int main(int argc, char **argv) {
         } else if (vBuff[0] == "haltT") {
           pLogger->info("get haltT cmd");
           haltT(gmCmdParser["haltT"], vBuff, mNode);
+        } else if (vBuff[0] == "updateT") {
+          pLogger->info("get updateT cmd");
+          updateT(gmCmdParser["updateT"], vBuff, mNode);
+        }
+        else if (vBuff[0] == "help") {
+          for (auto &pair : gmCmdParser) {
+            std::cout << " - " << pair.first << '\n';
+          }
+          std::cout << " - q       quit cmds\n"
+                    << " - helps   list all cmds\n";
         } else {
           pLogger->warn("get unknown cmd:{}", vBuff[0]);
         }

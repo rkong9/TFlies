@@ -186,10 +186,10 @@ int64_t timeParserValue(const std::string &str) {
 
 std::string TStatusToStr(int status) {
     switch (status) {
-        case 0: return std::string("Todo");
-        case 1: return std::string("Progress");
-        case 2: return std::string("Pause");
-        case 3: return std::string("Done");
+        case 0: return WHITE + std::string("Todo") + RESET;
+        case 1: return YELLOW + std::string("Progress") + RESET;
+        case 2: return CYAN + std::string("Pause") + RESET;
+        case 3: return GREEN + std::string("Done") + RESET;
 
     }
     return "Unknown";
@@ -197,12 +197,22 @@ std::string TStatusToStr(int status) {
 
 std::string TStatusToStrS(int status) {
     switch (status) {
-        case 0: return std::string("T");
-        case 1: return std::string("I");
-        case 2: return std::string("P");
-        case 3: return std::string("D");
+        case 0: return WHITE + std::string("T") + RESET;
+        case 1: return YELLOW + std::string("I") + RESET;
+        case 2: return CYAN + std::string("P") + RESET;
+        case 3: return GREEN + std::string("D") + RESET;
 
     }
     return "U";
+}
+
+std::string getColors(int status) {
+  switch(status) {
+    case 0: return WHITE;
+    case 1: return YELLOW;
+    case 2: return CYAN;
+    case 3: return GREEN;
+  }
+  return RESET;
 }
 

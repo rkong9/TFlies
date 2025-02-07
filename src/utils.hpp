@@ -16,5 +16,17 @@ int64_t timeParserValue(const std::string &str);
 std::string TStatusToStr(int status);
 std::string TStatusToStrS(int status);
 
+#define RESET   "\033[0m"
+#define RED     "\033[31m"
+#define GREEN   "\033[32m"
+#define YELLOW  "\033[33m"
+#define BLUE    "\033[34m"
+#define MAGENTA "\033[35m"
+#define CYAN    "\033[36m"
+#define WHITE   "\033[37m"
+#define BLOD    "\033[1m"
+
+std::string getColors(int status);
+
 #endif
 

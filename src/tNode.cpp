@@ -5,8 +5,11 @@
 
 std::atomic<int64_t> TNode::mPieceNums = 0;
 
-void TNode::setData(const Item &item) {
+void TNode::setData(const Item &item, bool update) {
   mData = item;
+  if (update) {
+    mStatus = true;
+  }
 }
 
 void TNode::setParentNode(std::shared_ptr<TNode> &pParent) {
@@ -141,6 +144,7 @@ int TNode::exe_halt(const std::string &desc, uint8_t efficiency) {
   int64_t costTime = mpCurrPieces->endtime - mpCurrPieces->begintime;
   mData.costTime += costTime;
   mData.updateTime = mpCurrPieces->endtime;
+  mData.status = static_cast<uint8_t>(TaskStatus::PAUSE);
 
   mpCurrPieces = nullptr;
 
