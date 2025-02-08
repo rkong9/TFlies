@@ -20,6 +20,7 @@ add_definitions("-Wall -g -std=c++17")
 add_executable(TFlies
     src/logger.cpp
     src/utils.cpp
+    src/viewer.cpp
     src/TFlies.cpp
     src/id.cpp
     src/tNode.cpp)

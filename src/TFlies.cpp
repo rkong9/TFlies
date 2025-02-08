@@ -693,7 +693,7 @@ int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
             << "  description:" << BLUE << it.desc << RESET << "\n"
             << "  status:" << getColors(it.status) << std::to_string(it.status) << RESET << "\n"
             << "  priority:" << std::to_string(it.priority) << "\n"
-            << "  efficiency:" << GREEN << std::to_string(it.efficiency) << RESET << "\n"
+            << "  efficiency:" << TEffiToStr(it.efficiency, true) << "\n"
             << "  createTime:" << MAGENTA << getDateStr(it.createTime) << RESET << "\n"
             << "  updateTime:" << GREEN << getDateStr(it.updateTime) << RESET << "\n"
             << "  dueTime:" << RED << getDateStr(it.dueTime) << RESET << "\n"
@@ -705,9 +705,9 @@ int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
     for (auto &piece : node->mqPieces) {
       std::cout << "   - " << WHITE << piece->piecesID << ", "
                 << piece->taskID << ", "
-                << piece->serialNumber << ", "
-                << std::to_string(piece->efficiency) << ", "
-                << getDateStr(piece->begintime) << ", "
+                << piece->serialNumber << RESET << ", "
+                << TEffiToStr(piece->efficiency, true) << ", "
+                << WHITE << getDateStr(piece->begintime) << ", "
                 << getDateStr(piece->endtime) << ", "
                 << getTimeStr(piece->endtime - piece->begintime) << ", "
                 << piece->desc << RESET << "\n";

@@ -19,6 +19,18 @@ enum class Priority
   BLOCK,
 };
 
+enum class Efficiency
+{
+    UNDEFINED,
+    EXTREM_LOW,
+    VERY_LOW,
+    LOW,
+    NORMAL,
+    HIGH,
+    VERY_HIGH,
+    EXTREM_HIGH,
+};
+
 struct Item
 {
   int64_t taskID;
@@ -37,9 +49,9 @@ struct Item
   Item() {
     taskID = -1;
     parentTaskID = -1;
-    status = static_cast<int>(TaskStatus::TODO);
-    priority = static_cast<int>(Priority::MINOR);
-    efficiency = 0;
+    status = static_cast<uint8_t>(TaskStatus::TODO);
+    priority = static_cast<uint8_t>(Priority::MINOR);
+    efficiency = static_cast<uint8_t>(Efficiency::UNDEFINED);
     createTime = 0;
     updateTime = 0;
     dueTime = -1;

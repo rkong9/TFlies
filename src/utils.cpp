@@ -1,5 +1,6 @@
 #include "utils.hpp"
 #include "logger.hpp"
+#include "viewer.hpp"
 #include <sstream>
 #include <chrono>
 #include <iomanip>
@@ -204,6 +205,68 @@ std::string TStatusToStrS(int status) {
 
     }
     return "U";
+}
+
+std::string getTrueColors(uint8_t r, uint8_t g, uint8_t b) {
+    std::stringstream ss;
+    ss << "\033[38;2;" << std::to_string(r) << ";" << std::to_string(g)
+       << ";" << std::to_string(b) << "m";
+    return ss.str();
+}
+
+std::string TEffiToStr(uint8_t efficiency, bool color) {
+    std::string FStr;
+    if (color) {
+        if (efficiency > 7) {
+            efficiency = 0;
+        }
+        auto &c = effColorMap[efficiency];
+        FStr = getTrueColors(c[0], c[1], c[2]);
+    }
+    switch (efficiency) {
+        case 0: FStr += "undefined"; break;      //UD
+        case 1: FStr += "extremely low"; break;  //EL
+        case 2: FStr += "very low"; break;      //VL
+        case 3: FStr += "low"; break;            //L
+        case 4: FStr += "normal"; break;        //N
+        case 5: FStr += "high"; break;          //H
+        case 6: FStr += "very high"; break;     //VH
+        case 7: FStr += "extremely high"; break; //EH
+        default: FStr += "undefined"; break;
+    }
+
+    if (color) {
+        FStr += RESET;
+    }
+
+    return FStr;
+}
+
+std::string TEffiToStrShort(uint8_t efficiency, bool color) {
+    std::string FStr;
+    if (color) {
+        if (efficiency > 7) {
+            efficiency = 0;
+        }
+        auto &c = effColorMap[efficiency];
+        FStr = getTrueColors(c[0], c[1], c[2]);
+    }
+    switch (efficiency) {
+        case 0: FStr += "UD"; break; //UD
+        case 1: FStr += "EL"; break; //EL
+        case 2: FStr += "VL"; break; //VL
+        case 3: FStr += "L";  break; //L
+        case 4: FStr += "N";  break; //N
+        case 5: FStr += "H";  break; //H
+        case 6: FStr += "VH"; break; //VH
+        case 7: FStr += "EH"; break; //EH
+        default: FStr += "UD"; break;
+    }
+
+    if (color) {
+        FStr += RESET;
+    }
+    return FStr;
 }
 
 std::string getColors(int status) {
