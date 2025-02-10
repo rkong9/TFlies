@@ -269,6 +269,54 @@ std::string TEffiToStrShort(uint8_t efficiency, bool color) {
     return FStr;
 }
 
+std::string TPrioToStr(uint8_t priority, bool color) {
+    std::string FStr;
+    if (color) {
+        if (priority > 5) {
+            priority = 0;
+        }
+        auto &c = prioColorMap[priority];
+        FStr = getTrueColors(c[0], c[1], c[2]);
+    }
+    switch (priority) {
+        case 0: FStr += "undefined"; break;
+        case 1: FStr += "trival"; break;
+        case 2: FStr += "minor"; break;
+        case 3: FStr += "major";  break;
+        case 4: FStr += "critical";  break;
+        case 5: FStr += "block";  break;
+        default: FStr += "undefined";  break;
+    }
+    if (color) {
+        FStr += RESET;
+    }
+    return FStr;
+}
+
+std::string TPrioToStrShort(uint8_t priority, bool color) {
+    std::string FStr;
+    if (color) {
+        if (priority > 5) {
+            priority = 0;
+        }
+        auto &c = prioColorMap[priority];
+        FStr = getTrueColors(c[0], c[1], c[2]);
+    }
+    switch (priority) {
+        case 0: FStr += "UD"; break; // undefined
+        case 1: FStr += "TR"; break; // triavl
+        case 2: FStr += "MIN"; break; // minor
+        case 3: FStr += "MAJ";  break; // major
+        case 4: FStr += "CRI";  break; // critical
+        case 5: FStr += "BLK";  break; // blocker
+        default: FStr += "UD";  break;
+    }
+    if (color) {
+        FStr += RESET;
+    }
+    return FStr;
+}
+
 std::string getColors(int status) {
   switch(status) {
     case 0: return WHITE;

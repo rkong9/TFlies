@@ -12,6 +12,7 @@ enum class TaskStatus
 
 enum class Priority
 {
+  UNDEFINED,
   TRIVAL,
   MINOR,
   MAJOR,
@@ -50,7 +51,7 @@ struct Item
     taskID = -1;
     parentTaskID = -1;
     status = static_cast<uint8_t>(TaskStatus::TODO);
-    priority = static_cast<uint8_t>(Priority::MINOR);
+    priority = static_cast<uint8_t>(Priority::UNDEFINED);
     efficiency = static_cast<uint8_t>(Efficiency::UNDEFINED);
     createTime = 0;
     updateTime = 0;

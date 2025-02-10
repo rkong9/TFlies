@@ -223,6 +223,62 @@ bool loadOrCreateDatabase(const std::string& dbPath, std::unordered_map<int64_t,
     return true;
 }
 
+uint8_t parserEfficiency(std::string str) {
+    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+    int eff(0);
+    if (str == "extremely low" || str == "el" || str == "1") {
+      eff = 1;
+    } else if (str == "very low" || str == "vl" || str == "2") {
+      eff = 2;
+    } else if (str == "low" || str == "l" || str == "3") {
+      eff = 3;
+    } else if (str == "normal" || str == "n" || str == "4") {
+      eff = 4;
+    } else if (str == "high" || str == "h" || str == "5") {
+      eff = 5;
+    } else if (str == "very high" || str == "vh" || str == "6") {
+      eff = 6;
+    } else if (str == "extremely high" || str == "eh" || str == "7") {
+      eff = 7;
+    }
+
+    return eff;
+}
+
+uint8_t parserPriority(std::string str) {
+    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+    int prio(0);
+    if (str == "trival" || str == "tr" || str == "1") {
+      prio = 1;
+    } else if (str == "minor" || str == "min" || str == "2") {
+      prio = 2;
+    } else if (str == "major" || str == "maj" || str == "3") {
+      prio = 3;
+    } else if (str == "critical" || str == "cri" || str == "4") {
+      prio = 4;
+    } else if (str == "block" || str == "blk" || str == "5") {
+      prio = 5;
+    }
+
+    return prio;
+}
+
+uint8_t parserStatus(std::string str) {
+    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+    int status(0);
+    if (str == "todo" || str == "t" || str == "1") {
+      status = 0;
+    } else if (str == "progress" || str == "i" || str == "2") {
+      status = 1;
+    } else if (str == "pause" || str == "p" || str == "3") {
+      status = 2;
+    } else if (str == "done" || str == "d" || str == "4") {
+      status = 3;
+    }
+
+    return status;
+}
+
 void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     CmdParserPtr createParser(new CmdParser);
     createParser->add<int64_t>("parentID", 'P', "task parent ID", false, 0);
@@ -230,7 +286,7 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     createParser->add<std::string>("dueDate", 'd', "task due date", false, "None");
     createParser->add<std::string>("description", 't', "task description", false, "None");
     createParser->add<std::string>("expectTime", 'e', "task expect time(ms/s/m/h)", false, "30m");
-    createParser->add<int>("priority", 'p', "task priority", false, 1);
+    createParser->add<std::string>("priority", 'p', "task priority(UD/TR/MIN/MAJ/CRI/BLK)", false, "UD");
     mParser["create"] = createParser;
 
     CmdParserPtr deleteParser(new CmdParser);
@@ -252,7 +308,7 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
 
     CmdParserPtr haltTParser(new CmdParser);
     haltTParser->add<int64_t>("ID", 'I', "task ID", true);
-    haltTParser->add<int>("efficiency", 'e', "efficiency", false, 2);
+    haltTParser->add<std::string>("efficiency", 'e', "efficiency(EL/VL/L/N/H/VH/EH)", false, "UD");
     haltTParser->add<std::string>("desc", 't', "pieces description", false, "None");
     mParser["halt"] = haltTParser;
 
@@ -267,7 +323,7 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     updateTParser->add<std::string>("dueDate", 'd', "task due date", false, "None");
     updateTParser->add<std::string>("description", 't', "task description", false, "None");
     updateTParser->add<std::string>("expectTime", 'e', "task expect time(ms/s/m/h)", false, "30m");
-    updateTParser->add<int>("priority", 'p', "task priority", false, 1);
+    updateTParser->add<std::string>("priority", 'p', "task priority(UD/TR/MIN/MAJ/CRI/BLK)", false, "UD");
     mParser["update"] = updateTParser;
 
     CmdParserPtr moveTParser(new CmdParser);
@@ -354,7 +410,8 @@ int createT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
   it.parentTaskID = pID;
   it.name = pParser->get<std::string>("name");
   it.desc = pParser->get<std::string>("description");
-  it.priority = pParser->get<int>("priority");
+  std::string sPrio = pParser->get<std::string>("priority");
+  it.priority = parserPriority(sPrio);
 
 
   std::string eTimeStr = pParser->get<std::string>("expectTime");
@@ -592,7 +649,10 @@ int updateT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
   }
 
   if (pParser->exist("priority")) {
-    it.priority = pParser->get<int>("priority");
+    it.priority = parserPriority(pParser->get<std::string>("priority"));
+    if (it.priority == 0) {
+      pLogger->warn("get undefined priority");
+    }
     update = true;
   }
 
@@ -691,8 +751,8 @@ int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
             << "  parentID:" << WHITE << it.parentTaskID << RESET << "\n"
             << "  name:" << GREEN << it.name << RESET << "\n"
             << "  description:" << BLUE << it.desc << RESET << "\n"
-            << "  status:" << getColors(it.status) << std::to_string(it.status) << RESET << "\n"
-            << "  priority:" << std::to_string(it.priority) << "\n"
+            << "  status:" << TStatusToStr(it.status) << "\n"
+            << "  priority:" << TPrioToStr(it.priority, true) << "\n"
             << "  efficiency:" << TEffiToStr(it.efficiency, true) << "\n"
             << "  createTime:" << MAGENTA << getDateStr(it.createTime) << RESET << "\n"
             << "  updateTime:" << GREEN << getDateStr(it.updateTime) << RESET << "\n"
@@ -707,10 +767,10 @@ int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
                 << piece->taskID << ", "
                 << piece->serialNumber << RESET << ", "
                 << TEffiToStr(piece->efficiency, true) << ", "
-                << WHITE << getDateStr(piece->begintime) << ", "
-                << getDateStr(piece->endtime) << ", "
-                << getTimeStr(piece->endtime - piece->begintime) << ", "
-                << piece->desc << RESET << "\n";
+                << CYAN << getDateStr(piece->begintime) << ", "
+                << getDateStr(piece->endtime) << RESET << ", "
+                << GREEN << getTimeStr(piece->endtime - piece->begintime) << RESET << ", "
+                << WHITE << piece->desc << RESET << "\n";
     }
   }
   return 0;
@@ -755,7 +815,7 @@ int haltT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
   }
   TNodePtr node = mNode[id];
   std::string desc = pParser->get<std::string>("desc");
-  uint8_t efficiency = pParser->get<int>("efficiency");
+  uint8_t efficiency = parserEfficiency(pParser->get<std::string>("efficiency"));
   node->exe_halt(desc, efficiency);
   return 0;
 }

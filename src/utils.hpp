@@ -19,6 +19,9 @@ std::string TStatusToStrS(int status);
 std::string TEffiToStr(uint8_t efficiency, bool color=false);
 std::string TEffiToStrShort(uint8_t efficiency, bool color=false);
 
+std::string TPrioToStr(uint8_t priority, bool color=false);
+std::string TPrioToStrShort(uint8_t priority, bool color=false);
+
 #define RESET   "\033[0m"
 #define RED     "\033[31m"
 #define GREEN   "\033[32m"

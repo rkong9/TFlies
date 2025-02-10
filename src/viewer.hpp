@@ -5,5 +5,6 @@
 
 std::string renderDailyEffGraph(const std::vector<float> &vEff);
 extern uint8_t effColorMap[8][3];
+extern uint8_t prioColorMap[6][3];
 
 #endif
