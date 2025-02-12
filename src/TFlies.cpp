@@ -13,6 +13,7 @@
 #include <stdexcept>
 
 #include "utils.hpp"
+#include "viewer.hpp"
 #include "logger.hpp"
 #include "dataType.hpp"
 #include "tNode.hpp"
@@ -27,6 +28,8 @@
 typedef cmdline::parser CmdParser;
 typedef std::shared_ptr<cmdline::parser> CmdParserPtr;
 std::unordered_map<std::string, CmdParserPtr> gmCmdParser;
+std::shared_ptr<TPieces> gpCurrPieces;
+std::vector<std::shared_ptr<TPieces>> gvpPieces;
 
 bool createDefaultDatabase(const std::string& dbPath) {
     sqlite3* db;
@@ -212,6 +215,7 @@ bool loadOrCreateDatabase(const std::string& dbPath, std::unordered_map<int64_t,
           ptp->endtime = sqlite3_column_int64(stmt, 5);
           ptp->desc = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6)));
           mNode[ptp->taskID]->setTimePieces(ptp);
+          gvpPieces.push_back(ptp);
           pLogger->trace("insert pieces:{},{} to task:{}", ptp->piecesID, ptp->serialNumber, ptp->taskID);
         }
       }
@@ -307,9 +311,8 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     mParser["exec"] = execTParser;
 
     CmdParserPtr haltTParser(new CmdParser);
-    haltTParser->add<int64_t>("ID", 'I', "task ID", true);
-    haltTParser->add<std::string>("efficiency", 'e', "efficiency(EL/VL/L/N/H/VH/EH)", false, "UD");
-    haltTParser->add<std::string>("desc", 't', "pieces description", false, "None");
+    haltTParser->add<std::string>("efficiency", 'e', "efficiency(EL/VL/L/N/H/VH/EH)", true);
+    haltTParser->add<std::string>("desc", 't', "pieces description", true);
     mParser["halt"] = haltTParser;
 
     CmdParserPtr setStatusParser(new CmdParser);
@@ -330,6 +333,56 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     moveTParser->add<int64_t>("srcID", 's', "source task ID", true);
     moveTParser->add<int64_t>("targetID", 't', "target task ID(new parent node)", true);
     mParser["move"] = moveTParser;
+
+    CmdParserPtr graphTParser(new CmdParser);
+    // graphTParser->add<int64_t>("ID", 'I', "task ID", true);
+    graphTParser->add<int>("mode", 'm', "graph viewer mode", false, 0);
+    graphTParser->add<int>("nums", 'n', "display nums(each mode has different meas)", false, 0);
+    mParser["graph"] = graphTParser;
+}
+
+std::vector<ViewData> getInfoOfTimeRange(int64_t time_beg, int64_t time_end) {
+    std::vector<ViewData> vInfo;
+    if (time_beg < time_end) {
+        pLogger->error("invalid time range", time_beg, time_end);
+        return vInfo;
+    }
+
+    float length = static_cast<float>(time_beg - time_end);
+    for (auto &pPieces : gvpPieces) {
+        if (pPieces->endtime < time_beg || pPieces->begintime > time_end) {
+            continue;
+        }
+        ViewData vd;
+        vd.beg = static_cast<float>(pPieces->begintime - time_beg) / length;
+        vd.end = static_cast<float>(pPieces->endtime - time_beg) / length;
+        vd.val = pPieces->efficiency;
+    }
+
+    std::sort(vInfo.begin(), vInfo.end(), [](const ViewData &a, const ViewData &b) {
+        return a.beg < b.beg;});
+
+    return vInfo;
+}
+
+int graph_analize(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
+  std::unordered_map<int64_t, TNodePtr> &mNode) {
+  if (!pParser->parse(vArgs)) {
+    std::cout << "parse graph cmd arguments failed, " << pParser->usage()
+              << std::endl;
+    return -1;
+  }
+
+  int g_mode = pParser->get<int>("mode");
+
+  switch(g_mode) {
+      case 0:
+
+      default:
+        break;
+  }
+
+  return 0;
 }
 
 int moveT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
@@ -441,7 +494,13 @@ int createT(const CmdParserPtr &pParser, const std::vector<std::string> &vArgs,
 bool insertOrUpdateTask(sqlite3* db, const std::shared_ptr<TNode> &node) {
     const Item &ti = node->getData();
     if (node->mStatus > 0) {
-      node->exe_halt("None", 3, true);
+      if (gpCurrPieces && gpCurrPieces->taskID == node->getID()) {
+        node->exe_halt(gpCurrPieces, "None", 3, true);
+        gvpPieces.push_back(gpCurrPieces);
+        gpCurrPieces = nullptr;
+      }
+
+      // node->exe_halt("None", 3, true);
       // 构造 SQL 语句
       std::string sql = "INSERT OR REPLACE INTO Tasks (TaskID, Name, ParentTaskID, Status, Priority, CreateTime, "
                         "UpdateTime, DueTime, CostTime, ExpectTime, Efficiency, TimePiecesTable, Description) "
@@ -762,7 +821,13 @@ int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
             << "  timePiecesTable:" << it.timePiecesTable << '\n';
   if (node->mqPieces.size() > 0) {
     std::cout << WHITE << "   + PieceID, TaskID, SerialID, Effic, BegTime, EndTime, CostTime, Desc" << WHITE << '\n';
+    int nums(0);
     for (auto &piece : node->mqPieces) {
+      if (!piece) {
+        pLogger->error("invalid time pieces:{} in task:{}", nums, it.taskID);
+        continue;
+      }
+
       std::cout << "   - " << WHITE << piece->piecesID << ", "
                 << piece->taskID << ", "
                 << piece->serialNumber << RESET << ", "
@@ -771,6 +836,7 @@ int showT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
                 << getDateStr(piece->endtime) << RESET << ", "
                 << GREEN << getTimeStr(piece->endtime - piece->begintime) << RESET << ", "
                 << WHITE << piece->desc << RESET << "\n";
+      nums++;
     }
   }
   return 0;
@@ -794,29 +860,43 @@ int execT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
     pLogger->warn("cannot find node:{}", id);
     return -1;
   }
+
+  if (gpCurrPieces) {
+    pLogger->warn("the task:{} is progressing", gpCurrPieces->taskID);
+    return -2;
+  }
   TNodePtr node = mNode[id];
-  node->exe_start();
+  node->exe_start(gpCurrPieces);
 
   return 0;
 }
 
 int haltT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
   std::unordered_map<int64_t, TNodePtr> &mNode) {
+
   pParser->parse(v_args);
   if (!pParser->parse(v_args)) {
     std::cout << "parse halt cmd arguments failed, usage:" << pParser->usage()
               << std::endl;
     return -1;
   }
-  int64_t id = pParser->get<int64_t>("ID");
+
+  if (!gpCurrPieces) {
+    pLogger->warn("no task is processing");
+  }
+
+  int64_t id = gpCurrPieces->taskID;
   if (mNode.find(id) == mNode.end()) {
-    pLogger->warn("cannot find node:{}", id);
+    pLogger->warn("cannot find task:{}", id);
     return -1;
   }
   TNodePtr node = mNode[id];
+
   std::string desc = pParser->get<std::string>("desc");
   uint8_t efficiency = parserEfficiency(pParser->get<std::string>("efficiency"));
-  node->exe_halt(desc, efficiency);
+  node->exe_halt(gpCurrPieces, desc, efficiency);
+  gvpPieces.push_back(gpCurrPieces);
+  gpCurrPieces = nullptr;
   return 0;
 }
 

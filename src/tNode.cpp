@@ -105,56 +105,55 @@ int TNode::getSubIndex() {
   return msID.getSubIndex();
 }
 
-int TNode::exe_start() {
+int TNode::exe_start(std::shared_ptr<TPieces> &pPieces) {
   if (mStatus < 0) {
     pLogger->warn("current status:{} is invalid", mStatus);
     return -1;
   }
 
-  if (mpCurrPieces) {
-    pLogger->warn("this node is already stated");
+  if (pPieces) {
+    pLogger->warn("this pieces:{} is already stated", pPieces->piecesID);
     return 1;
   }
 
-  mpCurrPieces = std::make_shared<TPieces>();
-  mpCurrPieces->begintime = getCurrentTimeMs();
-  mpCurrPieces->taskID = msID.getID();
+  pPieces = std::make_shared<TPieces>();
+  pPieces->begintime = getCurrentTimeMs();
+  pPieces->taskID = msID.getID();
   mData.status = static_cast<uint8_t>(TaskStatus::INPROGRESS);
   return 0;
 }
 
-int TNode::exe_halt(const std::string &desc, uint8_t efficiency, bool nowarn) {
+int TNode::exe_halt(std::shared_ptr<TPieces> &pPieces,
+    const std::string &desc, uint8_t efficiency, bool nowarn) {
   if (mStatus < 0) {
     return -1;
   }
 
-  if (!mpCurrPieces) {
+  if (!pPieces) {
     if (!nowarn) {
-      pLogger->warn("this node is already stoped");
+      pLogger->warn("this pieces is already stoped");
     } else {
-      pLogger->debug("this node is already stoped");
+      pLogger->debug("this pieces is already stoped");
     }
     return 1;
   }
   mStatus = 1;
 
-  mpCurrPieces->endtime = getCurrentTimeMs();
-  mpCurrPieces->serialNumber = mqPieces.size();
-  mpCurrPieces->piecesID = mPieceNums.load();
-  mpCurrPieces->desc = desc;
-  mpCurrPieces->efficiency = efficiency;
-  mpCurrPieces->status = 1;
-  mqPieces.push_back(mpCurrPieces);
+  pPieces->endtime = getCurrentTimeMs();
+  pPieces->serialNumber = mqPieces.size();
+  pPieces->piecesID = mPieceNums.load();
+  pPieces->desc = desc;
+  pPieces->efficiency = efficiency;
+  pPieces->status = 1;
+  mqPieces.push_back(pPieces);
   mPieceNums++;
   pLogger->debug("insert pieces success, nums:{}, mPieceNums:{}",
     mqPieces.size(), mPieceNums.load());
 
-  int64_t costTime = mpCurrPieces->endtime - mpCurrPieces->begintime;
+  int64_t costTime = pPieces->endtime - pPieces->begintime;
   mData.costTime += costTime;
-  mData.updateTime = mpCurrPieces->endtime;
+  mData.updateTime = pPieces->endtime;
   mData.status = static_cast<uint8_t>(TaskStatus::PAUSE);
-
-  mpCurrPieces = nullptr;
 
   return 0;
 }

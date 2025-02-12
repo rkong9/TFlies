@@ -40,8 +40,9 @@ public:
   int setTimePieces(std::shared_ptr<TPieces> &pieces);
   // void deleteSelfFromTree();
 
-  int exe_start();
-  int exe_halt(const std::string &desc, uint8_t efficiency, bool nowarn=false);
+  int exe_start(std::shared_ptr<TPieces> &pPieces);
+  int exe_halt(std::shared_ptr<TPieces> &pPieces,
+      const std::string &desc, uint8_t efficiency, bool nowarn=false);
 
   int setTaskStatus(uint8_t status);
   int setTaskDesc(const std::string &desc);
@@ -59,7 +60,6 @@ public:
 private:
   SID msID;
   Item mData;
-  std::shared_ptr<TPieces> mpCurrPieces;
   std::mutex mlSubMutex;
   std::shared_ptr<TNode> mpParent;
 };
