@@ -11,6 +11,7 @@ bool isValidMonth(int month);
 bool isValidDay(int year, int month, int day);
 bool isValidTime(int hour, int minute, int second, int milliseconds);
 bool isFutureTime(const std::tm& tm, int milliseconds);
+int64_t dateParserDate(const std::string &dateStr);
 int64_t timeParserDate(const std::string &timeStr);
 int64_t timeParserValue(const std::string &str);
 

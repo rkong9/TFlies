@@ -374,14 +374,24 @@ int graph_analize(const CmdParserPtr &pParser, const std::vector<std::string> &v
     return -1;
   }
 
-  std::time_t current_time = std::time(nullptr);
-  std::tm *local_time = std::localtime(&current_time);
-  std::tm rt = *local_time;
-  // get begtime
-  rt.tm_hour = 0;
-  rt.tm_min = 0;
-  rt.tm_sec = 0;
-  std::time_t begTime  = std::mktime(&rt);
+  uint64_t begTime(0);
+  if (pParser->exist("date")) {
+    std::string target_date = pParser->get<std::string>("date");
+    begTime = dateParserDate(target_date);
+    if (begTime < 0) {
+        pLogger->warn("parser target date failed");
+        return -2;
+    }
+  } else {
+    std::time_t current_time = std::time(nullptr);
+    std::tm *local_time = std::localtime(&current_time);
+    std::tm rt = *local_time;
+    // get begtime
+    rt.tm_hour = 0;
+    rt.tm_min = 0;
+    rt.tm_sec = 0;
+    begTime = std::mktime(&rt);
+  }
 
   std::vector<ViewData> vData;
   for (auto &pieces : gvpPieces) {

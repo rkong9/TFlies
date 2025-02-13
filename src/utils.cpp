@@ -100,6 +100,50 @@ bool isFutureTime(const std::tm& tm, int milliseconds) {
     return inputMs > nowMs;
 }
 
+int64_t dateParserDate(const std::string &dateStr) {
+    std::regex pattern(R"((\d{4})(\d{2})(\d{2}))");
+    std::smatch match;
+
+    int64_t finalTimestamp(-1);
+    do {
+      if (std::regex_match(dateStr, match, pattern)) {
+          int year = std::stoi(match[1]);
+          int month = std::stoi(match[2]);
+          int day = std::stoi(match[3]);
+
+          // 检查时间值的有效性
+          if (!isValidYear(year)) {
+              pLogger->warn("invalid year:{}", year);
+              break;
+          }
+          if (!isValidMonth(month)) {
+              pLogger->warn("invalid month:{}", month);
+              break;
+          }
+          if (!isValidDay(year, month, day)) {
+              pLogger->warn("invalid day:{}", day);
+              break;
+          }
+
+          // 构造 tm 结构体
+          std::tm tm = {};
+          tm.tm_year = year - 1900; // tm_year 是从 1900 开始的年份
+          tm.tm_mon = month - 1;    // tm_mon 是从 0 开始的月份
+          tm.tm_mday = day;
+          tm.tm_hour = 0;
+          tm.tm_min = 0;
+          tm.tm_sec = 0;
+
+          // 将 tm 转换为 time_t（秒级时间戳）
+          std::time_t time = std::mktime(&tm);
+          finalTimestamp = time;
+      } else {
+        pLogger->warn("invalid date format:{}, should:yyyymmdd", dateStr);
+      }
+    } while(0);
+    return finalTimestamp;
+}
+
 int64_t timeParserDate(const std::string &timeStr) {
     std::regex pattern(R"((\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\+(\d{3}))");
     std::smatch match;
