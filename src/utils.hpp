@@ -6,6 +6,7 @@
 std::string getDateStr(int64_t time_ms);
 std::string getTimeStr(int64_t time_ms);
 int64_t getCurrentTimeMs();
+bool isValidYear(int year);
 bool isValidMonth(int month);
 bool isValidDay(int year, int month, int day);
 bool isValidTime(int hour, int minute, int second, int milliseconds);
@@ -31,6 +32,7 @@ std::string TPrioToStrShort(uint8_t priority, bool color=false);
 #define CYAN    "\033[36m"
 #define WHITE   "\033[37m"
 #define BLOD    "\033[1m"
+#define REVERSE "\033[7m"
 
 std::string getColors(int status);
 

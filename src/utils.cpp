@@ -55,6 +55,10 @@ int64_t getCurrentTimeMs() {
     return millis.count();
 }
 
+bool isValidYear(int year) {
+    return year >= 1972;
+}
+
 // 检查月份是否有效
 bool isValidMonth(int month) {
     return month >= 1 && month <= 12;

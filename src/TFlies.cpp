@@ -338,6 +338,7 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     // graphTParser->add<int64_t>("ID", 'I', "task ID", true);
     graphTParser->add<int>("mode", 'm', "graph viewer mode", false, 0);
     graphTParser->add<int>("nums", 'n', "display nums(each mode has different meas)", false, 0);
+    graphTParser->add<std::string>("date", 'd', "date to display", false, "");
     mParser["graph"] = graphTParser;
 }
 
@@ -373,14 +374,41 @@ int graph_analize(const CmdParserPtr &pParser, const std::vector<std::string> &v
     return -1;
   }
 
-  int g_mode = pParser->get<int>("mode");
+  std::time_t current_time = std::time(nullptr);
+  std::tm *local_time = std::localtime(&current_time);
+  std::tm rt = *local_time;
+  // get begtime
+  rt.tm_hour = 0;
+  rt.tm_min = 0;
+  rt.tm_sec = 0;
+  std::time_t begTime  = std::mktime(&rt);
 
-  switch(g_mode) {
-      case 0:
-
-      default:
-        break;
+  std::vector<ViewData> vData;
+  for (auto &pieces : gvpPieces) {
+      ViewData vd;
+      vd.beg = (float)(pieces->begintime / 1000 - begTime) / 86400; // sec per day
+      vd.end = (float)(pieces->endtime / 1000 - begTime) / 86400;
+      if (vd.end < 0.0 || vd.beg > 1.0) {
+          continue;
+      } else if (vd.beg < 0.0) {
+        vd.beg = 0.0;
+      } else if (vd.end > 1.0) {
+        vd.end = 1.0;
+      }
+      vd.val = pieces->efficiency;
+      vData.push_back(vd);
   }
+
+  std::cout << renderDailyEffGraph(vData, 12, 60) << std::endl;
+
+  // int g_mode = pParser->get<int>("mode");
+
+  // switch(g_mode) {
+  //     case 0:
+
+  //     default:
+  //       break;
+  // }
 
   return 0;
 }
@@ -1042,6 +1070,9 @@ int main(int argc, char **argv) {
         } else if (vBuff[0] == "move") {
           pLogger->info("get move cmd");
           moveT(gmCmdParser["move"], vBuff, mNode);
+        } else if (vBuff[0] == "graph") {
+          pLogger->info("get graph cmd");
+          graph_analize(gmCmdParser["graph"], vBuff, mNode);
         }
         else if (vBuff[0] == "help") {
           for (auto &pair : gmCmdParser) {
