@@ -115,6 +115,7 @@ int TNode::exe_start(std::shared_ptr<TPieces> &pPieces) {
     pLogger->warn("this pieces:{} is already stated", pPieces->piecesID);
     return 1;
   }
+  mStatus = 1;
 
   pPieces = std::make_shared<TPieces>();
   pPieces->begintime = getCurrentTimeMs();
@@ -137,7 +138,6 @@ int TNode::exe_halt(std::shared_ptr<TPieces> &pPieces,
     }
     return 1;
   }
-  mStatus = 1;
 
   pPieces->endtime = getCurrentTimeMs();
   pPieces->serialNumber = mqPieces.size();

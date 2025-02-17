@@ -25,11 +25,15 @@
 
 #include <sqlite3.h>
 
+#include <signal.h>
+
 typedef cmdline::parser CmdParser;
 typedef std::shared_ptr<cmdline::parser> CmdParserPtr;
 std::unordered_map<std::string, CmdParserPtr> gmCmdParser;
 std::shared_ptr<TPieces> gpCurrPieces;
 std::vector<std::shared_ptr<TPieces>> gvpPieces;
+std::shared_ptr<TNode> gpRootNode;
+std::string gdbPath(".tf.db"); // 数据库路径
 
 bool createDefaultDatabase(const std::string& dbPath) {
     sqlite3* db;
@@ -669,6 +673,12 @@ int storeToDb(const std::string &dbPath, const TNodePtr &pNode) {
   return 0;
 }
 
+void sigint_handler(int sig) {
+    storeToDb(gdbPath, gpRootNode);
+    std::cout << "\nexit program success\n";
+    exit(0);
+}
+
 int deleteT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
     std::unordered_map<int64_t, TNodePtr> &mNode) {
   pParser->parse(v_args);
@@ -980,19 +990,19 @@ int main(int argc, char **argv) {
     // pLogger->set_level(spdlog::level::trace);
     Item rIt;
     rIt.name = "root";
-    std::shared_ptr<TNode> pRootNode(new TNode(rIt, SID(0)));
-    std::shared_ptr<TNode> pSelectedNode(pRootNode);
+    gpRootNode = std::make_shared<TNode>(rIt, SID(0));
+    std::shared_ptr<TNode> pSelectedNode(gpRootNode);
     std::unordered_map<int64_t, TNodePtr> mNode;
-    mNode[pRootNode->getID()] = pRootNode;
-    pLogger->debug("create root node success, id:{}", pRootNode->getID());
+    mNode[gpRootNode->getID()] = gpRootNode;
+    pLogger->debug("create root node success, id:{}", gpRootNode->getID());
 
-    std::string dbPath = ".tf.db"; // 数据库路径
-    if (loadOrCreateDatabase(dbPath, mNode)) {
-        pLogger->info("Database :{} loaded or created successfully", dbPath);
+    if (loadOrCreateDatabase(gdbPath, mNode)) {
+        pLogger->info("Database :{} loaded or created successfully", gdbPath);
     } else {
-        pLogger->critical("Failed to load or create database:{}", dbPath);
+        pLogger->critical("Failed to load or create database:{}", gdbPath);
     }
     initArgParser(gmCmdParser);
+    signal(SIGINT, sigint_handler);
 
     while(true) {
         std::string input;
@@ -1050,7 +1060,7 @@ int main(int argc, char **argv) {
 
         if (vBuff[0] == "q") {
             pLogger->info("exit program!");
-            storeToDb(dbPath, pRootNode);
+            storeToDb(gdbPath, gpRootNode);
             break;
         } else if (vBuff[0] == "create") {
           pLogger->info("get create cmd");
