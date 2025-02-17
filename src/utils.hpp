@@ -35,9 +35,14 @@ std::string TPrioToStrShort(uint8_t priority, bool color=false);
 #define BLOD    "\033[1m"
 #define REVERSE "\033[7m"
 
+#define M_FRONT 38
+#define M_BACKGROUND 48
+
 std::string getColors(int status);
 
-std::string getTrueColors(uint8_t r, uint8_t g, uint8_t b);
+std::string getTrueColors(uint8_t r, uint8_t g, uint8_t b, int mode);
+std::string getTrueColorsWithBg(uint8_t f_r, uint8_t f_g, uint8_t f_b,
+    uint8_t b_r, uint8_t b_g, uint8_t b_b);
 
 #endif
 

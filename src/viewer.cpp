@@ -7,13 +7,13 @@
 
 uint8_t effColorMap[8][3] = {
     {128, 128, 128},    // 灰色
-    {220, 20, 60},    // 深红色
-    {255, 69, 0},     // 红色
-    {255, 140, 0},    // 橙色
-    {255, 255, 0},    // 黄色
-    {173, 255, 47},   // 黄绿色
-    {0, 255, 0},      // 绿色
-    {0, 100, 0}       // 深绿色
+    {0xeb, 0x4a, 0x2d},    // 深红色
+    {0xe5, 0xa5, 0x33},     // 红色
+    {0xdf, 0xa1, 0x39},    // 橙色
+    {0xd9, 0xcc, 0x3f},    // 黄色
+    {0xaf, 0xc8, 0x3a},   // 黄绿色
+    {0x85, 0xc5, 0x34},      // 绿色
+    {0x5b, 0xc1, 0x2f}       // 深绿色
 };
 
 uint8_t prioColorMap[6][3] = {
@@ -94,7 +94,8 @@ std::string renderDailyEffGraph(const std::vector<ViewData> &vData, int rows, in
     }
 
     float last_color_idx(-1);
-    std::string scolor("");
+    uint8_t bg[3] = {23, 44, 60};
+    std::string scolor = getTrueColors(bg[0], bg[1], bg[2], M_BACKGROUND);
 
     for (size_t i = 0; i < vColor.size(); i++) {
         bool reverse(false);
@@ -102,9 +103,20 @@ std::string renderDailyEffGraph(const std::vector<ViewData> &vData, int rows, in
             int begH = (i * 24 / vColor.size());
             int endH = ((i + cols) * 24 / vColor.size());
             std::stringstream ss;
+            if (i == 0) {
+                ss << "           " << scolor;
+                for (int i = 0; i < cols; i++) {
+                    if ((i + 1) % 10 == 0) {
+                        ss << viewblocks[MAX_BLOCK];
+                    } else {
+                        ss << std::to_string((i + 1) % 10);
+                    }
+                }
+                ss << RESET << "\n";
+            }
             ss << RESET << std::string(WHITE) << std::setfill('0') << std::setw(2)
                << std::to_string(begH) << " --- " << std::setfill('0') << std::setw(2)
-               << std::to_string(endH) << "h: " << RESET << scolor;
+               << std::to_string(endH) << ": " << RESET << scolor;
 
             effGraph += ss.str();
             last_color_idx = -1;
@@ -151,9 +163,12 @@ std::string renderDailyEffGraph(const std::vector<ViewData> &vData, int rows, in
                 r = r * ratio + effColorMap[c_idx][0];
                 g = g * ratio + effColorMap[c_idx][1];
                 b = b * ratio + effColorMap[c_idx][2];
-                scolor = getTrueColors(static_cast<uint8_t>(r), static_cast<uint8_t>(g), static_cast<uint8_t>(b));
+                scolor = getTrueColorsWithBg(static_cast<uint8_t>(r), static_cast<uint8_t>(g), static_cast<uint8_t>(b),
+                    bg[0], bg[1], bg[2]);
             } else {
-                scolor = getTrueColors(effColorMap[c_idx][0], effColorMap[c_idx][1], effColorMap[c_idx][2]);
+                auto &fg = effColorMap[c_idx];
+                scolor = getTrueColorsWithBg(fg[0], fg[1], fg[2], bg[0], bg[1], bg[2]);
+                    // getTrueColors(effColorMap[c_idx][0], effColorMap[c_idx][1], effColorMap[c_idx][2]);
             }
         }
 
@@ -169,7 +184,7 @@ std::string renderDailyEffGraph(const std::vector<ViewData> &vData, int rows, in
         }
 
         if ((i + 1) % cols == 0 && (i + 1) != vColor.size()) {
-            effGraph += "\n";
+            effGraph += "\033[0m\n";
         }
     }
     effGraph += RESET + debug.str();

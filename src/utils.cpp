@@ -255,10 +255,20 @@ std::string TStatusToStrS(int status) {
     return "U";
 }
 
-std::string getTrueColors(uint8_t r, uint8_t g, uint8_t b) {
+std::string getTrueColors(uint8_t r, uint8_t g, uint8_t b, int mode) {
     std::stringstream ss;
-    ss << "\033[38;2;" << std::to_string(r) << ";" << std::to_string(g)
-       << ";" << std::to_string(b) << "m";
+    ss << "\033[" <<  std::to_string(mode) << ";2;" << std::to_string(r) 
+       << ";" << std::to_string(g) << ";" << std::to_string(b) << "m";
+    return ss.str();
+}
+
+std::string getTrueColorsWithBg(uint8_t f_r, uint8_t f_g, uint8_t f_b,
+    uint8_t b_r, uint8_t b_g, uint8_t b_b) {
+    std::stringstream ss;
+    ss << "\033[38;2;" << std::to_string(f_r)
+       << ";" << std::to_string(f_g) << ";" << std::to_string(f_b) << ";"
+       << "48;2;" << std::to_string(b_r) << ";" << std::to_string(b_g) << ";"
+       << std::to_string(b_b) << "m";
     return ss.str();
 }
 
@@ -269,7 +279,7 @@ std::string TEffiToStr(uint8_t efficiency, bool color) {
             efficiency = 0;
         }
         auto &c = effColorMap[efficiency];
-        FStr = getTrueColors(c[0], c[1], c[2]);
+        FStr = getTrueColors(c[0], c[1], c[2], M_FRONT);
     }
     switch (efficiency) {
         case 0: FStr += "undefined"; break;      //UD
@@ -297,7 +307,7 @@ std::string TEffiToStrShort(uint8_t efficiency, bool color) {
             efficiency = 0;
         }
         auto &c = effColorMap[efficiency];
-        FStr = getTrueColors(c[0], c[1], c[2]);
+        FStr = getTrueColors(c[0], c[1], c[2], M_FRONT);
     }
     switch (efficiency) {
         case 0: FStr += "UD"; break; //UD
@@ -324,7 +334,7 @@ std::string TPrioToStr(uint8_t priority, bool color) {
             priority = 0;
         }
         auto &c = prioColorMap[priority];
-        FStr = getTrueColors(c[0], c[1], c[2]);
+        FStr = getTrueColors(c[0], c[1], c[2], M_FRONT);
     }
     switch (priority) {
         case 0: FStr += "undefined"; break;
@@ -348,7 +358,7 @@ std::string TPrioToStrShort(uint8_t priority, bool color) {
             priority = 0;
         }
         auto &c = prioColorMap[priority];
-        FStr = getTrueColors(c[0], c[1], c[2]);
+        FStr = getTrueColors(c[0], c[1], c[2], M_FRONT);
     }
     switch (priority) {
         case 0: FStr += "UD"; break; // undefined

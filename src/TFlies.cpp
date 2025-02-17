@@ -409,7 +409,7 @@ int graph_analize(const CmdParserPtr &pParser, const std::vector<std::string> &v
       vData.push_back(vd);
   }
 
-  std::cout << renderDailyEffGraph(vData, 12, 60) << std::endl;
+  std::cout << renderDailyEffGraph(vData, 12, 60) << std::flush << std::endl;
 
   // int g_mode = pParser->get<int>("mode");
 
