@@ -304,6 +304,7 @@ void initArgParser(std::unordered_map<std::string, CmdParserPtr> &mParser) {
     CmdParserPtr listParser(new CmdParser);
     listParser->add<int64_t>("ID", 'I', "task ID", false, 0);
     listParser->add<int>("level", 'l', "task list level", false, -1);
+    listParser->add<bool>("all", 'a', "list all task", false, false);
     mParser["list"] = listParser;
 
     CmdParserPtr showParser(new CmdParser);
@@ -683,7 +684,7 @@ int deleteT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
     std::unordered_map<int64_t, TNodePtr> &mNode) {
   pParser->parse(v_args);
   if (!pParser->parse(v_args)) {
-    std::cout << "parse listT cmd arguments failed, usage:" << pParser->usage()
+    std::cout << "parse deleteT cmd arguments failed, usage:" << pParser->usage()
               << std::endl;
     return -1;
   }
@@ -770,7 +771,7 @@ int updateT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
   return 0;
 }
 
-void listAllT(std::shared_ptr<TNode> pNode, std::function<bool(std::shared_ptr<TNode>)> filter) {
+void listAllT(std::shared_ptr<TNode> pNode, std::function<bool(std::shared_ptr<TNode>)> filter, bool allMode) {
   // for 
   // std::stringstream ss;
   std::stack<std::shared_ptr<TNode>> spNode;
@@ -779,18 +780,26 @@ void listAllT(std::shared_ptr<TNode> pNode, std::function<bool(std::shared_ptr<T
   while(!spNode.empty()) {
     std::shared_ptr<TNode> pTempNode = spNode.top();
     spNode.pop();
-    int currLevel = pTempNode->getLevel();
-    for (int i = 0; i < currLevel - pNodeLevel; i++) {
-        std::cout << " | ";
-    }
-
     if (pTempNode->mStatus < 0) {
       continue;
     }
 
     auto it = pTempNode->getData();
+    if (!allMode && it.status == static_cast<uint8_t>(TaskStatus::DONE)) {
+      continue;
+    }
+
+    int currLevel = pTempNode->getLevel();
+    for (int i = 0; i < currLevel - pNodeLevel; i++) {
+        std::cout << " | ";
+    }
+
     if (filter(pTempNode)) {
-      std::cout << "+";
+      if (pTempNode->mqSubTNode.empty()) {
+        std::cout << "-";
+      } else {
+        std::cout << "+";
+      }
     } else {
       std::cout << "-";
       for (auto it = pTempNode->mqSubTNode.rbegin(); it != pTempNode->mqSubTNode.rend(); it++) {
@@ -819,6 +828,11 @@ int listT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
     level = 9999;
   }
   int64_t id = pParser->get<int64_t>("ID");
+  bool allMode(false);
+  // allMode = pParser->get<bool>("all");
+  if (pParser->exist("all")) {
+    allMode = true;
+  }
 
   if (mNode.find(id) != mNode.end()) {
     int currLevel = mNode[id]->getLevel();
@@ -829,8 +843,8 @@ int listT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
       return true;
     };
 
-    listAllT(mNode[id], filter);
-    pLogger->trace("list node:{}, currLevel:{}, level:{}", id, currLevel, level);
+    listAllT(mNode[id], filter, allMode);
+    pLogger->trace("list node:{}, currLevel:{}, level:{}, allMode:%d", id, currLevel, level, allMode);
   } else {
     pLogger->warn("cannot find id:{} to list", id);
   }
@@ -1010,7 +1024,7 @@ int main(int argc, char **argv) {
         std::getline(std::cin, input);
         pLogger->info("get inputs:{}", input);
         size_t validIndex(0);
-        while(validIndex < input.length()) {
+        while (validIndex < input.length()) {
             if (input[validIndex] != ' ') {
                 break;
             }
