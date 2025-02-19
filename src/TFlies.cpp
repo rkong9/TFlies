@@ -945,6 +945,7 @@ int haltT(const CmdParserPtr &pParser, const std::vector<std::string> &v_args,
 
   if (!gpCurrPieces) {
     pLogger->warn("no task is processing");
+    return -2;
   }
 
   int64_t id = gpCurrPieces->taskID;
