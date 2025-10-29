@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head><title>前端测试</title></head>
+<body style="padding: 20px; font-family: sans-serif;">
+  <h1>🔍 前端诊断页面</h1>
+  <div id="result"></div>
+  <script>
+    const div = document.getElementById('result');
+    div.innerHTML = '<p>✅ 浏览器正常工作</p>';
+    
+    // 测试 API
+    fetch('http://localhost:8000/api/tasks/')
+      .then(res => res.json())
+      .then(data => {
+        div.innerHTML += '<p>✅ 后端 API 正常，返回 ' + data.length + ' 个任务</p>';
+      })
+      .catch(err => {
+        div.innerHTML += '<p>❌ API 错误: ' + err.message + '</p>';
+      });
+  </script>
+</body>
+</html>
