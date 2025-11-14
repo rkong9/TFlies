@@ -239,6 +239,7 @@ const initChart = () => {
       type: 'bar',
       stack: 'total',
       data: data,
+      barWidth: '62.5%',  // 柱子宽度62.5%，间隙37.5%，比例约为1:0.6
       label: {
         show: false
       }
@@ -251,6 +252,36 @@ const initChart = () => {
       axisPointer: {
         type: 'shadow'
       },
+      // 智能定位，避免被其他元素遮挡
+      position: function (point, params, dom, rect, size) {
+        // point: [x, y] 鼠标位置
+        // size: { contentSize: [width, height], viewSize: [width, height] }
+
+        const [mouseX, mouseY] = point
+        const [tooltipWidth, tooltipHeight] = size.contentSize
+        const [chartWidth, chartHeight] = size.viewSize
+
+        // 默认显示在鼠标右侧
+        let x = mouseX + 15
+        let y = mouseY - tooltipHeight / 2
+
+        // 如果右侧空间不够，显示在左侧
+        if (x + tooltipWidth > chartWidth) {
+          x = mouseX - tooltipWidth - 15
+        }
+
+        // 确保不超出上边界
+        if (y < 0) {
+          y = 10
+        }
+
+        // 确保不超出下边界
+        if (y + tooltipHeight > chartHeight) {
+          y = chartHeight - tooltipHeight - 10
+        }
+
+        return [x, y]
+      },
       formatter: (params: any) => {
         if (!Array.isArray(params) || params.length === 0) return ''
 
@@ -258,11 +289,7 @@ const initChart = () => {
         const day = days[dayIndex]
         const segments = dailySegments[dayIndex]
 
-        // 计算高层统计信息
-        const workingSegments = segments.filter(s => s.type === 'working')
-        const sliceCount = workingSegments.length
-
-        // 获取这一天的所有时间片来计算任务数
+        // 获取这一天的所有时间片（原始数据）
         const dayStart = new Date(day)
         const dayEnd = new Date(day)
         dayEnd.setDate(dayEnd.getDate() + 1)
@@ -273,29 +300,32 @@ const initChart = () => {
           return sliceStart >= dayStart && sliceStart < dayEnd
         })
 
+        // 计算统计信息（基于原始时间片，而不是处理后的segments）
+        const sliceCount = dayTimeSlices.length
         const uniqueTasks = new Set(dayTimeSlices.map(s => s.task_id))
         const taskCount = uniqueTasks.size
 
+        // 计算总工作时长（毫秒转小时）
+        const totalWorkMs = dayTimeSlices.reduce((sum, slice) => sum + (slice.duration_ms || 0), 0)
+        const totalWorkHours = totalWorkMs / (1000 * 60 * 60)
+
         // 计算平均效率
         let avgEfficiency = 0
-        if (workingSegments.length > 0) {
-          const totalEfficiency = workingSegments.reduce((sum, s) => sum + (s.efficiency || 0), 0)
-          avgEfficiency = totalEfficiency / workingSegments.length
+        if (sliceCount > 0) {
+          const totalEfficiency = dayTimeSlices.reduce((sum, s) => sum + (s.efficiency_score || 0), 0)
+          avgEfficiency = totalEfficiency / sliceCount
         }
 
-        // 计算最长和最短时间片
+        // 计算最长和最短时间片（小时）
         let maxDuration = 0
         let minDuration = Infinity
-        workingSegments.forEach(s => {
-          const duration = s.endHour - s.startHour
-          if (duration > maxDuration) maxDuration = duration
-          if (duration < minDuration) minDuration = duration
+        dayTimeSlices.forEach(slice => {
+          const durationHours = (slice.duration_ms || 0) / (1000 * 60 * 60)
+          if (durationHours > maxDuration) maxDuration = durationHours
+          if (durationHours < minDuration) minDuration = durationHours
         })
 
         if (minDuration === Infinity) minDuration = 0
-
-        // 计算总工作时长
-        const totalWorkHours = workingSegments.reduce((sum, s) => sum + (s.endHour - s.startHour), 0)
 
         let content = `<b>${formatWeekday(day)} ${formatDate(day)}</b><br/>`
         content += `<div style="margin-top: 8px;">`
@@ -317,21 +347,13 @@ const initChart = () => {
       }
     },
     grid: {
-      left: '8%',
-      right: '4%',
-      top: '15%',
-      bottom: '15%',
-      containLabel: true
+      left: '12%',
+      right: '2%',
+      top: '2%',
+      bottom: '2%',
+      containLabel: false
     },
     xAxis: {
-      type: 'category',
-      data: xAxisData,
-      axisLabel: {
-        fontSize: 11,
-        color: '#666'
-      }
-    },
-    yAxis: {
       type: 'value',
       name: '小时',
       max: 24,
@@ -344,6 +366,20 @@ const initChart = () => {
         lineStyle: {
           color: '#e5e7eb'
         }
+      }
+    },
+    yAxis: {
+      type: 'category',
+      data: xAxisData,
+      axisLabel: {
+        fontSize: 11,
+        color: '#666'
+      },
+      axisTick: {
+        show: false
+      },
+      axisLine: {
+        show: false
       }
     },
     series: series
@@ -400,6 +436,7 @@ const updateChart = () => {
       type: 'bar',
       stack: 'total',
       data: data,
+      barWidth: '62.5%',  // 柱子宽度62.5%，间隙37.5%，比例约为1:0.6
       label: {
         show: false
       }
@@ -407,7 +444,7 @@ const updateChart = () => {
   }
 
   chartInstance.setOption({
-    xAxis: {
+    yAxis: {
       data: xAxisData
     },
     series: series

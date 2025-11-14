@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useMessage, useDialog } from 'naive-ui'
 import {
   NLayout,
@@ -41,13 +41,17 @@ const tasks = ref<Task[]>([])
 const selectedTask = ref<Task | null>(null)
 const selectedTimeSlice = ref<TimeSlice | null>(null)
 const dailyChartRef = ref<InstanceType<typeof DailyEfficiencyChart> | null>(null)
+const timeSliceListRef = ref<HTMLDivElement | null>(null) // 时间片列表容器引用
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const showTimeSliceModal = ref(false)
 const showEditTimeSliceModal = ref(false)
 const showTrash = ref(false)
 const searchKeyword = ref('')
+const isEditingDescription = ref(false)
+const editingDescriptionText = ref('')
 const currentTimeSlice = ref<{ id: string; start_at: string; task_id: string } | null>(null)
+const now = ref(new Date()) // 用于实时更新正在执行的时间片
 const timeSliceForm = ref({
   efficiency_score: 3,
   note: '',
@@ -98,6 +102,8 @@ const contextMenuTask = ref<Task | null>(null)
 
 // 拖拽状态：记录当前被拖拽的节点
 const draggingNode = ref<any>(null)
+const dragOverInfo = ref<{ nodeId: string; position: 'before' | 'after' } | null>(null)
+const isDraggingStarted = ref(false) // 标记是否真正开始拖拽（区分点击和拖拽）
 
 // 右键菜单选项（根据任务锁定状态动态生成）
 const contextMenuOptions = computed(() => {
@@ -168,6 +174,7 @@ const newTask = ref({
   due_at: null as string | null,
   is_ddl: false,
   estimated_time_ms: 1,
+  priority: 3,  // 默认优先级 P3
   parent_id: undefined as string | undefined,
 })
 const editTask = ref({
@@ -190,6 +197,23 @@ const loadData = async () => {
     // 加载所有任务
     const response = await tasksApi.getAll()
     tasks.value = response.data
+
+    // 检查并修复 position 字段（如果所有任务的 position 都是 0，则重新初始化）
+    const allPositionsZero = tasks.value.every(t => t.position === 0)
+    console.log('🔍 Position check:', {
+      totalTasks: tasks.value.length,
+      allPositionsZero,
+      samplePositions: tasks.value.slice(0, 5).map(t => ({ title: t.title, position: t.position }))
+    })
+
+    if (allPositionsZero && tasks.value.length > 0) {
+      console.log('⚠️ All positions are 0, reinitializing...')
+      await reinitializePositions()
+      // 重新加载数据
+      const reloadResponse = await tasksApi.getAll()
+      tasks.value = reloadResponse.data
+      console.log('✅ Positions reloaded:', tasks.value.slice(0, 5).map(t => ({ title: t.title, position: t.position })))
+    }
 
     // 检查并同步currentTimeSlice与实际working状态的任务
     const workingTask = tasks.value.find(t => t.execution_state === 'working')
@@ -235,6 +259,55 @@ const loadData = async () => {
   }
 }
 
+// 重新初始化所有任务的 position
+const reinitializePositions = async () => {
+  try {
+    console.log('🔧 Starting position reinitialization...')
+    console.log('📊 Current tasks:', tasks.value.map(t => ({ id: t.id, title: t.title, position: t.position })))
+
+    // 按照父任务分组
+    const tasksByParent = new Map<string | null, Task[]>()
+    tasks.value.forEach(task => {
+      const parentId = task.parent_id || null
+      if (!tasksByParent.has(parentId)) {
+        tasksByParent.set(parentId, [])
+      }
+      tasksByParent.get(parentId)!.push(task)
+    })
+
+    console.log('📦 Tasks grouped by parent:', Array.from(tasksByParent.entries()).map(([parent, tasks]) => ({
+      parent: parent || 'root',
+      count: tasks.length
+    })))
+
+    // 为每个分组按创建时间排序并设置 position
+    const updatePromises: Promise<any>[] = []
+    tasksByParent.forEach((siblings, parentId) => {
+      // 按创建时间排序（使用 id 作为代理，假设 id 是按时间递增的）
+      siblings.sort((a, b) => a.id.localeCompare(b.id))
+
+      // 为每个任务设置递增的 position（从 10 开始，间隔 10）
+      siblings.forEach((task, index) => {
+        const newPosition = (index + 1) * 10
+        console.log(`📍 Setting position for task "${task.title}": ${newPosition}`)
+        updatePromises.push(tasksApi.updatePosition(task.id, newPosition))
+      })
+    })
+
+    console.log(`🚀 Updating ${updatePromises.length} tasks...`)
+    await Promise.all(updatePromises)
+
+    message.success('任务位置已初始化')
+    console.log('✅ Position reinitialization complete')
+
+    // 重新加载数据
+    await loadData()
+  } catch (error) {
+    console.error('❌ Position reinitialization failed:', error)
+    message.error('位置初始化失败: ' + (error as any).message)
+  }
+}
+
 const getStatusIcon = (status: string) => {
   const icons: Record<string, string> = {
     todo: '⬜',
@@ -243,6 +316,59 @@ const getStatusIcon = (status: string) => {
     completed: '✅',
   }
   return icons[status] || '•'
+}
+
+// 判断 ancestorTask 是否是 descendantTask 的祖先
+const isAncestorOf = (ancestorId: string, descendantId: string): boolean => {
+  let currentId: string | undefined = descendantId
+  while (currentId) {
+    const task = tasks.value.find(t => t.id === currentId)
+    if (!task) break
+    if (task.parent_id === ancestorId) return true
+    currentId = task.parent_id
+  }
+  return false
+}
+
+// 判断任务是否在当前树中可见（所有父任务都展开）
+const isTaskVisible = (taskId: string): boolean => {
+  let currentId: string | undefined = taskId
+  while (currentId) {
+    const task = tasks.value.find(t => t.id === currentId)
+    if (!task) break
+
+    // 检查父任务是否展开
+    if (task.parent_id) {
+      const parentExpanded = expandedKeys.value.includes(task.parent_id)
+      if (!parentExpanded) {
+        return false // 父任务未展开，当前任务不可见
+      }
+    }
+
+    currentId = task.parent_id
+  }
+  return true // 所有父任务都展开，当前任务可见
+}
+
+// 找到选中任务的最近可见祖先
+const findNearestVisibleAncestor = (taskId: string): string | null => {
+  let currentId: string | undefined = taskId
+  const task = tasks.value.find(t => t.id === currentId)
+  if (!task || !task.parent_id) return null
+
+  currentId = task.parent_id
+  while (currentId) {
+    const parentTask = tasks.value.find(t => t.id === currentId)
+    if (!parentTask) break
+
+    // 检查这个父任务是否可见
+    if (isTaskVisible(currentId)) {
+      return currentId
+    }
+
+    currentId = parentTask.parent_id
+  }
+  return null
 }
 
 // 构建任务树（扁平化，不显示项目层级）
@@ -255,17 +381,20 @@ const taskTreeData = computed((): TreeOption[] => {
       )
     : tasks.value
 
-  // 构建任务标签（带工作状态高亮）
+  // 构建任务标签（带工作状态高亮，DDL锁定显示圆圈斜杠）
   const buildLabel = (task: Task): string => {
-    const statusIcon = getStatusIcon(task.status)
     const isWorking = task.execution_state === 'working'
+    const locked = isTaskLocked(task)
+
+    // DDL锁定的任务：显示红色圆圈斜杠而不是状态图标
+    let icon = locked ? '🚫' : getStatusIcon(task.status)
 
     if (isWorking) {
       // 正在工作的任务：添加工作图标
-      return `${statusIcon} ⏱️ ${task.title}`
+      return `${icon} ⏱️ ${task.title}`
     }
 
-    return `${statusIcon} ${task.title}`
+    return `${icon} ${task.title}`
   }
 
   // 如果有搜索关键词，显示所有匹配的任务（扁平化）
@@ -465,7 +594,76 @@ const getEffectiveEstimatedTime = (task: Task): number | null => {
   return hasAnyEstimate ? total : null
 }
 
-// 计算时间效率（预期时间/实际时间，越大越好）
+// 计算时间使用率（实际时间/预期时间，新版本：实际时间为基准）
+const calculateTimeUsageRate = (task: Task): number => {
+  const estimatedTime = getEffectiveEstimatedTime(task)
+  const actualTime = task.total_logged_ms + calculateChildrenTotalTime(task.id)
+  
+  // 特殊情况1：还没开始工作
+  if (actualTime === 0) {
+    return 0  // 0% → 绿色
+  }
+  
+  // 特殊情况2：有实际时间，但没设预期时间
+  if (estimatedTime === null || estimatedTime === 0) {
+    return 100  // 100% → 橙色
+  }
+  
+  // 正常情况：实际时间 / 预期时间
+  return (actualTime / estimatedTime) * 100
+}
+
+// 判断是否有预期时间设置
+const hasEstimatedTime = (task: Task): boolean => {
+  const estimatedTime = getEffectiveEstimatedTime(task)
+  return estimatedTime !== null && estimatedTime > 0
+}
+
+// 根据时间使用率百分比获取颜色（统一颜色映射）
+const getUsageRateColor = (usageRate: number): string => {
+  if (usageRate < 40) return '#22c55e'      // 绿色：效率很高
+  if (usageRate < 80) return '#eab308'      // 黄色：正常进度
+  if (usageRate < 120) return '#f97316'     // 橙色：接近/轻微超时
+  if (usageRate < 240) return '#ef4444'     // 红色：明显超时
+  return '#000000'                          // 黑色：严重超时
+}
+
+// 根据使用率获取状态文字
+const getUsageStatusText = (usageRate: number, hasEstimate: boolean, actualTime: number): string => {
+  if (actualTime === 0) {
+    return hasEstimate ? '🆕 尚未开始' : '🆕 尚未开始'
+  }
+  
+  if (!hasEstimate) {
+    return '⚠️ 未设定预期时间'
+  }
+  
+  if (usageRate < 40) return '⚡ 效率很高'
+  if (usageRate < 80) return '✅ 进度正常'
+  if (usageRate < 120) return '⚠️ 接近预期'
+  if (usageRate < 240) return '🔴 时间超支'
+  return '💀 严重超时'
+}
+
+// 生成时间使用率的完整文字显示
+const getUsageRateText = (task: Task): string => {
+  const usageRate = calculateTimeUsageRate(task)
+  const hasEstimate = hasEstimatedTime(task)
+  const actualTime = task.total_logged_ms + calculateChildrenTotalTime(task.id)
+  const estimatedTime = getEffectiveEstimatedTime(task)
+  
+  if (actualTime === 0) {
+    return hasEstimate ? '未开始' : '未开始'
+  }
+  
+  if (!hasEstimate) {
+    return `${usageRate.toFixed(1)}% (未设定预期)`
+  }
+  
+  return `${usageRate.toFixed(1)}% (${formatDuration(actualTime)} / ${formatDuration(estimatedTime)})`
+}
+
+// 计算时间效率（预期时间/实际时间，越大越好）- 保留原函数供其他地方使用
 const calculateTimeEfficiency = (task: Task): number => {
   // 获取有效的预期时间
   const effectiveEstimatedTime = getEffectiveEstimatedTime(task)
@@ -506,6 +704,54 @@ const calculateWorkEfficiency = (task: Task): number => {
   if (totalDuration === 0) return 0
   return totalWeightedScore / totalDuration
 }
+
+// 处理并排序时间片（为正在执行的时间片注入虚拟时间）
+const processedTimeSlices = computed(() => {
+  if (!selectedTask.value) return []
+
+  return selectedTask.value.time_slices
+    .map(slice => {
+      // 如果是正在执行的时间片（end_at 为 null），注入虚拟的 end_at 和 duration_ms
+      if (slice.end_at === null) {
+        const virtualEndAt = now.value.toISOString()
+        const virtualDuration = now.value.getTime() - new Date(slice.start_at).getTime()
+        return {
+          ...slice,
+          end_at: virtualEndAt,
+          duration_ms: virtualDuration,
+          _isRunning: true // 标记为正在运行，用于特殊样式
+        }
+      }
+      return { ...slice, _isRunning: false }
+    })
+    .sort((a, b) => {
+      // 按开始时间正序排列（最早的在最上面，最新的在最下面）
+      return new Date(a.start_at).getTime() - new Date(b.start_at).getTime()
+    })
+})
+
+// 滚动到时间片列表底部
+const scrollToTimeSliceBottom = () => {
+  nextTick(() => {
+    if (timeSliceListRef.value) {
+      timeSliceListRef.value.scrollTop = timeSliceListRef.value.scrollHeight
+    }
+  })
+}
+
+// 监听任务切换，自动滚动到底部
+watch(selectedTask, () => {
+  if (selectedTask.value && selectedTask.value.time_slices.length > 0) {
+    scrollToTimeSliceBottom()
+  }
+})
+
+// 监听时间片变化，自动滚动到底部
+watch(() => selectedTask.value?.time_slices.length, (newLength, oldLength) => {
+  if (newLength && newLength > (oldLength || 0)) {
+    scrollToTimeSliceBottom()
+  }
+})
 
 // 计算子任务的总用时（递归统计所有后代）
 const calculateChildrenTotalTime = (taskId: string): number => {
@@ -577,6 +823,7 @@ const handleCreateTask = async () => {
       project_id: defaultProject.id,
       title: newTask.value.title,
       description: newTask.value.description,
+      priority: newTask.value.priority,  // 添加优先级
       due_at: newTask.value.due_at ? new Date(newTask.value.due_at).toISOString() : undefined,
       is_ddl: newTask.value.is_ddl,
       estimated_time_ms: newTask.value.estimated_time_ms != null ? newTask.value.estimated_time_ms * 3600000 : null, // 转换为毫秒
@@ -591,7 +838,10 @@ const handleCreateTask = async () => {
     newTask.value = {
       title: '',
       description: '',
+      due_at: null,
+      is_ddl: false,
       estimated_time_ms: 1,
+      priority: 3,  // 重置为默认优先级
       parent_id: undefined,
     }
 
@@ -775,6 +1025,45 @@ const handleDailyChartTaskClick = (taskId: string) => {
     selectedTask.value = task
     message.success(`已选中任务：${task.title}`)
   }
+}
+
+// 处理描述双击编辑
+const handleDescriptionDoubleClick = () => {
+  if (!selectedTask.value || isTaskLocked(selectedTask.value)) {
+    if (isTaskLocked(selectedTask.value!)) {
+      message.error('🔒 任务已锁定，无法编辑')
+    }
+    return
+  }
+
+  isEditingDescription.value = true
+  editingDescriptionText.value = selectedTask.value.description || ''
+}
+
+// 处理描述保存
+const handleDescriptionSave = async () => {
+  if (!selectedTask.value) return
+
+  try {
+    await tasksApi.update(selectedTask.value.id, {
+      description: editingDescriptionText.value || null,
+    })
+    message.success('描述已更新')
+    isEditingDescription.value = false
+
+    // 更新选中的任务
+    const response = await tasksApi.get(selectedTask.value.id)
+    selectedTask.value = response.data
+  } catch (error) {
+    message.error('更新失败')
+    console.error(error)
+  }
+}
+
+// 处理描述编辑取消
+const handleDescriptionCancel = () => {
+  isEditingDescription.value = false
+  editingDescriptionText.value = ''
 }
 
 // 处理逻辑状态切换（生命周期状态）
@@ -1049,7 +1338,7 @@ const handleTaskRestored = async () => {
   message.success('任务已从回收站恢复')
 }
 
-// 为NTree节点添加自定义属性（用于高亮正在工作的任务、右键菜单和优先级颜色）
+// 为NTree节点添加自定义属性（用于高亮正在工作的任务、右键菜单、优先级颜色和选中高亮）
 const getNodeProps = ({ option }: { option: TreeOption }) => {
   const task = option.task as Task | undefined
   const props: any = {}
@@ -1059,45 +1348,198 @@ const getNodeProps = ({ option }: { option: TreeOption }) => {
     props.onContextmenu = (e: MouseEvent) => {
       handleNodeContextMenu(e, task)
     }
+    
+    // 添加title属性用于鼠标悬停显示完整标题
+    props.title = task.title
   }
 
-  // 添加优先级样式类
+  // 添加优先级样式类 + 选中高亮
   if (task) {
     const classes = []
 
-    // 工作中任务的高亮样式
-    if (task.execution_state === 'working') {
-      classes.push('working-task-node')
+    // DDL锁定任务的灰色样式
+    if (isTaskLocked(task)) {
+      classes.push('ddl-locked-task')
+    }
+
+    // 工作中任务的高亮样式（区分可见和被折叠）
+    const workingTask = tasks.value.find(t => t.execution_state === 'working')
+    if (workingTask) {
+      const workingTaskId = workingTask.id
+      const workingTaskVisible = isTaskVisible(workingTaskId)
+
+      if (workingTaskVisible) {
+        // 正在执行的任务可见 → 只高亮任务本身（粉色）
+        if (task.id === workingTaskId) {
+          classes.push('working-task-node')
+        }
+      } else {
+        // 正在执行的任务不可见（被折叠）→ 高亮最近可见的父任务（浅粉色）
+        const nearestVisibleAncestor = findNearestVisibleAncestor(workingTaskId)
+        if (nearestVisibleAncestor && task.id === nearestVisibleAncestor) {
+          classes.push('working-ancestor-node')
+        }
+      }
+    }
+
+    // 选中任务的高亮样式
+    if (selectedTask.value) {
+      const selectedTaskId = selectedTask.value.id
+      const selectedTaskVisible = isTaskVisible(selectedTaskId)
+
+      if (selectedTaskVisible) {
+        // 选中任务可见 → 只高亮任务本身（绿色）
+        if (task.id === selectedTaskId) {
+          classes.push('selected-task-node')
+        }
+      } else {
+        // 选中任务不可见（被折叠）→ 高亮最近可见的父任务（浅绿色）
+        const nearestVisibleAncestor = findNearestVisibleAncestor(selectedTaskId)
+        if (nearestVisibleAncestor && task.id === nearestVisibleAncestor) {
+          classes.push('selected-ancestor-node')
+        }
+      }
     }
 
     // 优先级颜色样式
     classes.push(`priority-${task.priority}`)
+
+    // 拖拽悬停样式
+    if (dragOverInfo.value && dragOverInfo.value.nodeId === task.id) {
+      if (dragOverInfo.value.position === 'before') {
+        classes.push('drag-over-before')
+      } else if (dragOverInfo.value.position === 'after') {
+        classes.push('drag-over-after')
+      }
+    }
+
+    // 正在被拖拽的节点样式
+    if (draggingNode.value?.option?.task?.id === task.id) {
+      classes.push('dragging-node')
+    }
 
     if (classes.length > 0) {
       props.class = classes.join(' ')
     }
   }
 
-  // 添加原生拖拽事件监听
-  props.onDragStart = (e: DragEvent) => {
-    draggingNode.value = { option }
+  // 使用 mousedown 事件来记录拖拽节点（因为 dragstart 可能被 NTree 拦截）
+  props.onMousedown = (e: MouseEvent) => {
+    // 只在鼠标左键按下时记录
+    if (e.button === 0) {
+      console.log('🖱️ Mousedown on node:', option)
+      draggingNode.value = { option }
+      isDraggingStarted.value = false // 重置拖拽标志
+    }
   }
 
-  props.onDragEnd = (e: DragEvent) => {
+  // 鼠标松开时，如果没有开始拖拽（只是点击），清空 draggingNode
+  props.onMouseup = (e: MouseEvent) => {
+    if (e.button === 0 && !isDraggingStarted.value && draggingNode.value) {
+      console.log('👆 Mouseup without drag - clearing draggingNode')
+      draggingNode.value = null
+      dragOverInfo.value = null
+    }
+  }
+
+  // 尝试在 dragstart 时设置 effectAllowed
+  props.onDragstart = (e: DragEvent) => {
+    console.log('🎬 Dragstart event fired!')
+    isDraggingStarted.value = true // 标记真正开始拖拽
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move'
+    }
+  }
+
+  // 阻止默认行为，允许 drop 事件触发
+  props.onDragover = (e: DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    // 设置 dropEffect 以明确指示这是一个移动操作
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'move'
+    }
+  }
+
+  // 添加原生 drop 事件处理器（因为 NTree 的 @drop 不触发）
+  props.onDrop = (e: DragEvent) => {
+    console.log('💧💧💧 Native onDrop event fired! 💧💧💧')
+    e.preventDefault()
+    e.stopPropagation()
+
+    if (!task || !draggingNode.value) {
+      console.log('❌ Drop aborted: missing task or draggingNode')
+      return
+    }
+
+    const dragTask = draggingNode.value?.option?.task || draggingNode.value?.task
+    const dropTask = task
+
+    console.log('📦 Native drop - dragTask:', dragTask?.title, 'dropTask:', dropTask?.title)
+
+    // 根据鼠标相对于节点的位置判断是 before 还是 after
+    // 获取节点的 bounding rect
+    const rect = (e.target as HTMLElement).getBoundingClientRect()
+    const mouseY = e.clientY
+    const nodeMiddle = rect.top + rect.height / 2
+
+    // 如果鼠标在节点上半部分，则为 before，否则为 after
+    const dropPosition = mouseY < nodeMiddle ? 'before' : 'after'
+
+    console.log('📍 Mouse position calculation:', {
+      mouseY,
+      nodeTop: rect.top,
+      nodeBottom: rect.bottom,
+      nodeMiddle,
+      dropPosition
+    })
+
+    // 调用原来的 handleDrop 逻辑
+    // 需要构造 NTree 的 info 格式
+    const dropInfo = {
+      node: { option: { task: dropTask }, task: dropTask },
+      dragNode: draggingNode.value,
+      dropPosition: dropPosition
+    }
+
+    console.log('🎯 Calling handleDrop with:', dropInfo)
+    handleDrop(dropInfo)
+  }
+
+  props.onDragend = (e: DragEvent) => {
+    console.log('🏁 Native dragend')
+
+    // 如果 dragend 时有 dragOverInfo，说明鼠标悬停在有效的 drop 目标上
+    // 此时执行 drop 逻辑（绕过 NTree 的 drop 事件）
+    if (dragOverInfo.value && draggingNode.value) {
+      console.log('🎯 Dragend with valid drop target, executing drop logic!')
+
+      const dragTask = draggingNode.value?.option?.task || draggingNode.value?.task
+
+      // 从 dragOverInfo 中找到目标任务
+      const dropTaskId = dragOverInfo.value.nodeId
+      const dropTask = tasks.value.find(t => t.id === dropTaskId)
+
+      if (dragTask && dropTask) {
+        console.log('📦 Dragend drop - dragTask:', dragTask.title, 'dropTask:', dropTask.title)
+
+        const dropInfo = {
+          node: { option: { task: dropTask }, task: dropTask },
+          dragNode: draggingNode.value,
+          dropPosition: dragOverInfo.value.position
+        }
+
+        console.log('🎯 Calling handleDrop from dragend with:', dropInfo)
+        handleDrop(dropInfo)
+      }
+    }
+
     draggingNode.value = null
+    dragOverInfo.value = null
+    isDraggingStarted.value = false // 重置拖拽标志
   }
 
   return props
-}
-
-// 拖拽开始：记录被拖拽的节点
-const handleDragStart = (info: any) => {
-  draggingNode.value = info.node
-}
-
-// 拖拽结束：清除记录
-const handleDragEnd = (info: any) => {
-  draggingNode.value = null
 }
 
 // 验证拖拽：仅允许同级任务之间拖拽
@@ -1105,99 +1547,165 @@ const allowDrop = (info: any) => {
   const { dropPosition, node, dragNode } = info
   const effectiveDragNode = dragNode || draggingNode.value
 
+  console.log('🎯 allowDrop called', { dropPosition, node, dragNode, effectiveDragNode })
+
   if (!effectiveDragNode) {
+    dragOverInfo.value = null
     return false
   }
 
   if (searchKeyword.value) {
+    dragOverInfo.value = null
     return false
   }
 
   const dropTask = node?.option?.task || node?.task || node?.rawNode?.task
   const dragTask = effectiveDragNode?.option?.task || effectiveDragNode?.task || effectiveDragNode?.rawNode?.task
 
+  console.log('📦 Tasks:', { dropTask, dragTask })
+
   if (!dropTask || !dragTask) {
+    dragOverInfo.value = null
     return false
   }
 
   if (dropPosition === 'inside') {
+    dragOverInfo.value = null
     return false
   }
 
-  return dropTask.parent_id === dragTask.parent_id
+  // 检查是否拖到自己身上
+  if (dragTask.id === dropTask.id) {
+    console.log('❌ Cannot drop on itself')
+    dragOverInfo.value = null
+    return false
+  }
+
+  const canDrop = dropTask.parent_id === dragTask.parent_id
+
+  // 更新拖拽悬停信息（用于显示插入位置指示器）
+  if (canDrop && dropPosition !== 'inside') {
+    dragOverInfo.value = {
+      nodeId: dropTask.id,
+      position: dropPosition as 'before' | 'after'
+    }
+    console.log('✅ Setting dragOverInfo:', dragOverInfo.value)
+  } else {
+    dragOverInfo.value = null
+    console.log('❌ Cannot drop here')
+  }
+
+  console.log('🔄 allowDrop returning:', canDrop, 'dragTask:', dragTask.title, 'dropTask:', dropTask.title)
+  return canDrop
 }
 
 // 处理拖拽放置：计算新位置并更新
 const handleDrop = async (info: any) => {
+  console.log('🚀🚀🚀 handleDrop TRIGGERED! 🚀🚀🚀')
+  console.log('🎯 handleDrop called:', info)
+
+  // 清除悬停状态
+  dragOverInfo.value = null
+
   const { node, dragNode, dropPosition } = info
   const effectiveDragNode = dragNode || draggingNode.value
+
+  console.log('📦 effectiveDragNode:', effectiveDragNode)
 
   const dragTask = effectiveDragNode?.task || effectiveDragNode?.option?.task || effectiveDragNode?.rawNode?.task
   const dropTask = node?.task || node?.option?.task || node?.rawNode?.task
 
+  console.log('📦 Extract tasks:', { dragTask, dropTask })
+
   if (!dragTask || !dropTask) {
+    console.error('❌ Missing task data')
     message.error('拖拽失败：任务数据不存在')
     return
   }
 
   // 守卫：检查任务是否可拖拽
-  if (!ensureTaskEditable(dragTask, '移动')) return
+  if (!ensureTaskEditable(dragTask, '移动')) {
+    console.log('❌ Task not editable')
+    return
+  }
 
   // 验证：如果正在搜索，禁止拖拽
   if (searchKeyword.value) {
+    console.log('❌ Search mode active')
     message.warning('搜索模式下不允许拖拽任务')
     return
   }
 
   // 验证：不允许设为子任务
   if (dropPosition === 'inside') {
+    console.log('❌ Inside drop not allowed')
     message.warning('不允许将任务设为其他任务的子任务，只能调整同级顺序')
     return
   }
 
   // 验证：只允许同级任务之间拖拽
   if (dropTask.parent_id !== dragTask.parent_id) {
+    console.log('❌ Different parent')
     message.warning('只能在同级任务之间调整顺序')
     return
   }
+
+  console.log('✅ All validations passed')
 
   // 获取所有同级任务，按position排序
   const siblings = tasks.value
     .filter(t => t.parent_id === dragTask.parent_id)
     .sort((a, b) => a.position - b.position)
 
+  console.log('📊 Siblings:', siblings.map(s => ({ id: s.id, title: s.title, position: s.position })))
+
   // 计算新的position
   let newPosition: number
   const dropIndex = siblings.findIndex(t => t.id === dropTask.id)
 
+  console.log('📍 dropIndex:', dropIndex, 'dropPosition:', dropPosition)
+
   if (dropPosition === 'before') {
     if (dropIndex === 0) {
       newPosition = dropTask.position / 2
+      console.log('📍 Before first item, dividing position by 2:', dropTask.position, '→', newPosition)
     } else {
       const prevTask = siblings[dropIndex - 1]
       newPosition = (prevTask.position + dropTask.position) / 2
+      console.log('📍 Before middle item, averaging:', prevTask.position, '+', dropTask.position, '→', newPosition)
     }
   } else if (dropPosition === 'after') {
     if (dropIndex === siblings.length - 1) {
       newPosition = dropTask.position + 10
+      console.log('📍 After last item, adding 10:', dropTask.position, '→', newPosition)
     } else {
       const nextTask = siblings[dropIndex + 1]
       newPosition = (dropTask.position + nextTask.position) / 2
+      console.log('📍 After middle item, averaging:', dropTask.position, '+', nextTask.position, '→', newPosition)
+      console.log('📍 dropTask:', dropTask.title, 'position:', dropTask.position)
+      console.log('📍 nextTask:', nextTask.title, 'position:', nextTask.position)
     }
   } else {
+    console.error('❌ Invalid dropPosition:', dropPosition)
     return
   }
 
+  console.log('📍 New position calculated:', newPosition)
+
   if (isNaN(newPosition)) {
+    console.error('❌ NaN position')
     message.error('位置计算错误，请检查任务数据')
     return
   }
 
   try {
+    console.log('🚀 Updating position for task:', dragTask.id, 'to', newPosition)
     await tasksApi.updatePosition(dragTask.id, newPosition)
+    console.log('✅ Position updated, reloading data...')
     await loadData()
     message.success('任务顺序已更新')
   } catch (error: any) {
+    console.error('❌ Update failed:', error)
     message.error('更新失败: ' + (error.response?.data?.detail || error.message))
   }
 }
@@ -1285,6 +1793,8 @@ const checkDDLExpiry = async () => {
 
 // DDL检查定时器
 let ddlCheckInterval: ReturnType<typeof setInterval> | null = null
+// 时间片实时更新定时器
+let timeUpdateInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
   loadExpandedKeys()
@@ -1295,12 +1805,20 @@ onMounted(async () => {
   ddlCheckInterval = setInterval(() => {
     checkDDLExpiry()
   }, 60000) // 60秒
+
+  // 每秒更新一次时间（用于实时显示正在执行的时间片）
+  timeUpdateInterval = setInterval(() => {
+    now.value = new Date()
+  }, 1000) // 1秒
 })
 
 onBeforeUnmount(() => {
   // 组件卸载时清除定时器
   if (ddlCheckInterval) {
     clearInterval(ddlCheckInterval)
+  }
+  if (timeUpdateInterval) {
+    clearInterval(timeUpdateInterval)
   }
 })
 </script>
@@ -1322,16 +1840,251 @@ onBeforeUnmount(() => {
   background: #e0f2fe !important;
 }
 
-/* 正在工作的任务高亮样式 */
-:deep(.working-task-node) {
-  font-weight: 600 !important;
-  color: #dc2626 !important;
-  border-left: 3px solid #dc2626 !important;
-  padding-left: 5px !important;
-  animation: pulse 2s ease-in-out infinite;
+/* 正在运行的时间片样式 */
+.time-slice-item.running {
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.08) 0%, rgba(239, 68, 68, 0.04) 100%) !important;
+  border-left: 3px solid #ef4444 !important;
+  animation: timeSlicePulse 2s ease-in-out infinite;
 }
 
-/* 优先级背景色样式 */
+.time-slice-item.running:hover {
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.12) 0%, rgba(239, 68, 68, 0.06) 100%) !important;
+}
+
+/* 正在运行的时间片脉冲动画 */
+@keyframes timeSlicePulse {
+  0%, 100% {
+    opacity: 1;
+    border-left-color: #ef4444;
+  }
+  50% {
+    opacity: 0.85;
+    border-left-color: #f87171;
+  }
+}
+
+/* DDL锁定任务的灰色样式 - 同时影响文字和文字背景 */
+:deep(.ddl-locked-task) {
+  color: #9ca3af !important;
+  opacity: 0.7 !important;
+}
+
+/* DDL锁定任务的文字背景也要变灰，4px圆角 */
+:deep(.ddl-locked-task .n-tree-node-content::before) {
+  background: rgba(156, 163, 175, 0.15) !important;
+  border-color: rgba(156, 163, 175, 0.3) !important;
+  border-radius: 4px !important; /* 修改为4px圆角 */
+  box-shadow: 0 2px 4px rgba(156, 163, 175, 0.1) !important;
+}
+
+/* 正在工作的任务高亮样式 - 改为蓝色圆角文字背景 */
+:deep(.working-task-node) {
+  color: #3b82f6 !important;
+  font-weight: 600 !important;
+}
+
+:deep(.working-task-node .n-tree-node-content::before) {
+  content: '';
+  position: absolute;
+  left: 24px;
+  top: 2px;
+  bottom: 2px;
+  right: 8px; /* 延伸到行尾，留一点边距 */
+  background: rgba(59, 130, 246, 0.2);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  border-radius: 4px; /* 修改为4px圆角 */
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.1);
+  transition: all 0.2s ease;
+  pointer-events: none;
+  z-index: 1; /* 在优先级背景之上 */
+  animation: workingPulse 2s ease-in-out infinite;
+}
+
+/* 正在工作任务的父任务（折叠时显示）- 浅蓝色圆角背景，从第一个字符到行尾，4px圆角 */
+:deep(.working-ancestor-node .n-tree-node-content::before) {
+  content: '';
+  position: absolute;
+  left: 24px;
+  top: 2px;
+  bottom: 2px;
+  right: 8px; /* 延伸到行尾，留一点边距 */
+  background: rgba(147, 197, 253, 0.15);
+  border: 1px solid rgba(147, 197, 253, 0.3);
+  border-radius: 4px; /* 修改为4px圆角 */
+  box-shadow: 0 2px 4px rgba(147, 197, 253, 0.1);
+  transition: all 0.2s ease;
+  pointer-events: none;
+  z-index: 1; /* 在优先级背景之上 */
+}
+
+/* 正在工作任务的脉冲动画 */
+@keyframes workingPulse {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+    border-color: #60a5fa;
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(59, 130, 246, 0.5);
+    border-color: #3b82f6;
+  }
+}
+
+/* 选中任务的高亮样式 - 移除整行背景，改为文字背景 */
+:deep(.selected-task-node) {
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: none !important;
+}
+
+/* 选中任务的祖先（折叠时显示）- 移除整行背景，改为文字背景 */
+:deep(.selected-ancestor-node) {
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: none !important;
+}
+
+/* 文字圆角背景的通用样式基础 - 添加平滑过渡动画 */
+:deep(.selected-task-node .n-tree-node-content),
+:deep(.selected-ancestor-node .n-tree-node-content),
+:deep(.working-task-node .n-tree-node-content),
+:deep(.working-ancestor-node .n-tree-node-content) {
+  position: relative;
+}
+
+/* 所有文字背景的过渡动画 */
+:deep(.selected-task-node .n-tree-node-content::before),
+:deep(.selected-ancestor-node .n-tree-node-content::before),
+:deep(.working-task-node .n-tree-node-content::before),
+:deep(.working-ancestor-node .n-tree-node-content::before) {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+/* 激活状态时的动画 */
+:deep(.selected-task-node .n-tree-node-content::before),
+:deep(.working-task-node .n-tree-node-content::before) {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* 祖先状态时的动画（稍微减弱） */
+:deep(.selected-ancestor-node .n-tree-node-content::before),
+:deep(.working-ancestor-node .n-tree-node-content::before) {
+  opacity: 0.8;
+  transform: scale(0.98);
+}
+
+/* 选中任务的文字圆角背景 - 绿色，从第一个字符到行尾，4px圆角 */
+:deep(.selected-task-node .n-tree-node-content::before) {
+  content: '';
+  position: absolute;
+  left: 24px; /* 跳过展开箭头区域 */
+  top: 2px;
+  bottom: 2px;
+  right: 8px; /* 延伸到行尾，留一点边距 */
+  background: rgba(34, 197, 94, 0.2);
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  border-radius: 4px; /* 修改为4px圆角 */
+  box-shadow: 0 2px 4px rgba(34, 197, 94, 0.1);
+  transition: all 0.2s ease;
+  pointer-events: none; /* 不阻挡点击事件 */
+  z-index: 1; /* 在优先级背景之上 */
+}
+
+/* 选中任务祖先的文字圆角背景 - 浅绿色，从第一个字符到行尾，4px圆角 */
+:deep(.selected-ancestor-node .n-tree-node-content::before) {
+  content: '';
+  position: absolute;
+  left: 24px;
+  top: 2px;
+  bottom: 2px;
+  right: 8px; /* 延伸到行尾，留一点边距 */
+  background: rgba(134, 239, 172, 0.15);
+  border: 1px solid rgba(134, 239, 172, 0.3);
+  border-radius: 4px; /* 修改为4px圆角 */
+  box-shadow: 0 2px 4px rgba(134, 239, 172, 0.1);
+  transition: all 0.2s ease;
+  pointer-events: none;
+  z-index: 1; /* 在优先级背景之上 */
+}
+
+/* 优先级背景色样式 - 从文字开始到行尾，4px圆角 */
+:deep(.priority-1),
+:deep(.priority-2),
+:deep(.priority-3),
+:deep(.priority-4),
+:deep(.priority-5) {
+  position: relative;
+}
+
+:deep(.priority-1 .n-tree-node-content::after) {
+  content: '';
+  position: absolute;
+  left: 24px; /* 跳过展开箭头区域 */
+  top: 2px;
+  bottom: 2px;
+  right: 8px; /* 延伸到行尾，留一点边距 */
+  background: linear-gradient(90deg, rgba(147, 51, 234, 0.25) 0%, rgba(147, 51, 234, 0.12) 100%);
+  border-radius: 4px; /* 4px圆角 */
+  pointer-events: none;
+  z-index: 0; /* 在状态背景之下 */
+}
+
+:deep(.priority-2 .n-tree-node-content::after) {
+  content: '';
+  position: absolute;
+  left: 24px;
+  top: 2px;
+  bottom: 2px;
+  right: 8px;
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.25) 0%, rgba(239, 68, 68, 0.12) 100%);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+:deep(.priority-3 .n-tree-node-content::after) {
+  content: '';
+  position: absolute;
+  left: 24px;
+  top: 2px;
+  bottom: 2px;
+  right: 8px;
+  background: linear-gradient(90deg, rgba(234, 179, 8, 0.2) 0%, rgba(234, 179, 8, 0.08) 100%);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+:deep(.priority-4 .n-tree-node-content::after) {
+  content: '';
+  position: absolute;
+  left: 24px;
+  top: 2px;
+  bottom: 2px;
+  right: 8px;
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.2) 0%, rgba(59, 130, 246, 0.08) 100%);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+:deep(.priority-5 .n-tree-node-content::after) {
+  content: '';
+  position: absolute;
+  left: 24px;
+  top: 2px;
+  bottom: 2px;
+  right: 8px;
+  background: linear-gradient(90deg, rgba(156, 163, 175, 0.2) 0%, rgba(156, 163, 175, 0.08) 100%);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 0;
+}
+/* 
 :deep(.priority-1) {
   background: linear-gradient(90deg, rgba(147, 51, 234, 0.25) 0%, rgba(147, 51, 234, 0.12) 100%) !important;
 }
@@ -1351,8 +2104,10 @@ onBeforeUnmount(() => {
 :deep(.priority-5) {
   background: linear-gradient(90deg, rgba(156, 163, 175, 0.2) 0%, rgba(156, 163, 175, 0.08) 100%) !important;
 }
+*/
 
-/* 工作中任务叠加优先级样式 */
+/* 工作中任务叠加优先级样式 - 已移除，避免与文字背景冲突 */
+/*
 :deep(.working-task-node.priority-1) {
   background: linear-gradient(90deg, rgba(147, 51, 234, 0.3) 0%, rgba(147, 51, 234, 0.15) 100%) !important;
 }
@@ -1372,15 +2127,142 @@ onBeforeUnmount(() => {
 :deep(.working-task-node.priority-5) {
   background: linear-gradient(90deg, rgba(156, 163, 175, 0.25) 0%, rgba(156, 163, 175, 0.12) 100%) !important;
 }
+*/
 
-@keyframes pulse {
+/* 确保文字圆角背景在优先级背景之上显示 */
+:deep(.selected-task-node .n-tree-node-content::before),
+:deep(.selected-ancestor-node .n-tree-node-content::before),
+:deep(.working-task-node .n-tree-node-content::before),
+:deep(.working-ancestor-node .n-tree-node-content::before) {
+  z-index: 1; /* 提高层级，覆盖优先级背景 */
+}
+
+/* 增强文字圆角背景的阴影效果 */
+:deep(.selected-task-node .n-tree-node-content::before) {
+  box-shadow: 
+    0 2px 4px rgba(34, 197, 94, 0.1),
+    0 1px 2px rgba(34, 197, 94, 0.2);
+}
+
+:deep(.selected-ancestor-node .n-tree-node-content::before) {
+  box-shadow: 
+    0 2px 4px rgba(134, 239, 172, 0.1),
+    0 1px 2px rgba(134, 239, 172, 0.15);
+}
+
+:deep(.working-task-node .n-tree-node-content::before) {
+  box-shadow: 
+    0 2px 4px rgba(59, 130, 246, 0.1),
+    0 1px 2px rgba(59, 130, 246, 0.2);
+}
+
+:deep(.working-ancestor-node .n-tree-node-content::before) {
+  box-shadow: 
+    0 2px 4px rgba(147, 197, 253, 0.1),
+    0 1px 2px rgba(147, 197, 253, 0.15);
+}
+
+/* 拖拽相关样式 */
+/* 给所有树节点添加过渡动画和相对定位（用于伪元素）+ 单行文字显示 */
+:deep(.n-tree-node-content) {
+  position: relative !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  
+  /* 单行文字显示设置 */
+  overflow: hidden !important;
+  white-space: nowrap !important;
+  text-overflow: ellipsis !important;
+  
+  /* 确保文字不超出背景的右边界 - 背景是 right: 8px，所以文字也要留出8px */
+  padding-right: 12px !important; /* 比背景的8px多留4px安全边距 */
+}
+
+/* 正在被拖拽的节点 */
+:deep(.dragging-node .n-tree-node-content) {
+  opacity: 0.4 !important;
+  cursor: grabbing !important;
+  transform: scale(0.95) rotate(2deg) !important;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* 拖拽到before位置时的样式 - 大幅度向下移动，创造巨大空间 */
+:deep(.drag-over-before .n-tree-node-content) {
+  margin-top: 48px !important;  /* 大幅增加上边距，"挤开"效果 */
+  border-top: 4px solid #18a058 !important;
+  padding-top: 8px !important;
+  box-shadow: 0 -4px 12px rgba(24, 160, 88, 0.3) !important;
+  background: linear-gradient(to bottom, rgba(24, 160, 88, 0.08) 0%, transparent 100%) !important;
+}
+
+/* 拖拽到after位置时的样式 - 大幅度增加下边距，把下方节点"挤"下去 */
+:deep(.drag-over-after .n-tree-node-content) {
+  margin-bottom: 48px !important;  /* 大幅增加下边距，"挤开"效果 */
+  border-bottom: 4px solid #18a058 !important;
+  padding-bottom: 8px !important;
+  box-shadow: 0 4px 12px rgba(24, 160, 88, 0.3) !important;
+  background: linear-gradient(to top, rgba(24, 160, 88, 0.08) 0%, transparent 100%) !important;
+}
+
+/* 拖拽悬停脉冲动画 - 更明显的视觉提示 */
+@keyframes dragPulse {
   0%, 100% {
+    transform: translateY(0) scale(1);
     opacity: 1;
   }
   50% {
-    opacity: 0.85;
+    transform: translateY(-3px) scale(1.02);
+    opacity: 0.95;
   }
 }
+
+:deep(.drag-over-before .n-tree-node-content),
+:deep(.drag-over-after .n-tree-node-content) {
+  animation: dragPulse 0.8s ease-in-out infinite;
+}
+
+/* 拖拽时给树容器添加一些样式提示 */
+:deep(.n-tree--dragging) {
+  user-select: none;
+}
+
+/* 插入指示线动画 */
+@keyframes insertLineGrow {
+  from {
+    width: 0;
+    opacity: 0;
+  }
+  to {
+    width: 100%;
+    opacity: 1;
+  }
+}
+
+:deep(.drag-over-before .n-tree-node-content::before) {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, #18a058 0%, #22c55e 100%);
+  border-radius: 2px;
+  animation: insertLineGrow 0.3s ease-out;
+}
+
+:deep(.drag-over-after .n-tree-node-content::after) {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, #18a058 0%, #22c55e 100%);
+  border-radius: 2px;
+  animation: insertLineGrow 0.3s ease-out;
+}
+
+
+
 </style>
 
 <template>
@@ -1396,7 +2278,7 @@ onBeforeUnmount(() => {
     </NLayoutHeader>
 
     <NLayoutContent style="height: calc(100vh - 64px)">
-      <div style="display: grid; grid-template-columns: 25% 50% 25%; height: 100%; gap: 1px; background: #e5e7eb">
+      <div style="display: grid; grid-template-columns: 20% 50% 30%; height: 100%; gap: 1px; background: #e5e7eb">
 
         <div style="background: white; padding: 16px; overflow: auto">
           <h3 style="margin-bottom: 12px">任务列表</h3>
@@ -1414,6 +2296,7 @@ onBeforeUnmount(() => {
             block-line
             selectable
             draggable
+            :allow-drop="allowDrop"
             :node-props="getNodeProps"
             :expanded-keys="expandedKeys"
             @update:expanded-keys="handleExpandedKeysChange"
@@ -1470,7 +2353,38 @@ onBeforeUnmount(() => {
                     </NButton>
                   </NSpace>
                 </div>
-                <p style="color: #666; margin-top: 8px">{{ selectedTask.description || '无描述' }}</p>
+
+                <!-- 任务描述 - 支持双击编辑 -->
+                <div style="margin-top: 12px">
+                  <div v-if="!isEditingDescription"
+                       @dblclick="handleDescriptionDoubleClick"
+                       style="
+                         color: #333;
+                         padding: 8px 12px;
+                         background: #f9fafb;
+                         border-radius: 6px;
+                         min-height: 60px;
+                         cursor: text;
+                         line-height: 1.6;
+                       "
+                       :title="isTaskLocked(selectedTask) ? '🔒 任务已锁定，无法编辑' : '双击编辑描述'"
+                  >
+                    {{ selectedTask.description || '无描述（双击添加）' }}
+                  </div>
+                  <div v-else style="display: flex; flex-direction: column; gap: 8px">
+                    <NInput
+                      v-model:value="editingDescriptionText"
+                      type="textarea"
+                      placeholder="请输入任务描述"
+                      :rows="4"
+                      :autosize="{ minRows: 4, maxRows: 8 }"
+                    />
+                    <div style="display: flex; gap: 8px; justify-content: flex-end">
+                      <NButton size="small" @click="handleDescriptionCancel">取消</NButton>
+                      <NButton size="small" type="primary" @click="handleDescriptionSave">保存</NButton>
+                    </div>
+                  </div>
+                </div>
 
                 <!-- 截止时间显示 -->
                 <div v-if="getEffectiveDueAt(selectedTask)" style="margin-top: 8px; padding: 8px; background: #f9fafb; border-radius: 4px; font-size: 13px">
@@ -1483,178 +2397,193 @@ onBeforeUnmount(() => {
                   </span>
                 </div>
 
-                <div style="margin-top: 16px">
-                  <div style="font-size: 12px; color: #999; margin-bottom: 4px">逻辑状态</div>
-                  <div style="display: flex; align-items: center; gap: 12px">
-                    <span
-                      :style="{
-                        display: 'inline-block',
-                        padding: '4px 12px',
-                        borderRadius: '4px',
-                        backgroundColor: getStatusColor(selectedTask.status),
-                        color: 'white',
-                        fontSize: '14px',
-                        fontWeight: '500',
-                      }"
-                    >
-                      {{ getStatusIcon(selectedTask.status) }} {{ getStatusLabel(selectedTask.status) }}
-                    </span>
-                    <NSelect
-                      :value="selectedTask.status"
-                      :options="statusOptions"
-                      style="width: 160px"
-                      @update:value="handleStatusChange"
-                    />
-                  </div>
-                </div>
-
-                <div v-if="selectedTask.status === 'in_progress'" style="margin-top: 16px">
-                  <div style="font-size: 12px; color: #999; margin-bottom: 4px">执行状态</div>
-                  <div style="display: flex; align-items: center; gap: 12px">
-                    <span
-                      :style="{
-                        display: 'inline-block',
-                        padding: '4px 12px',
-                        borderRadius: '4px',
-                        backgroundColor: selectedTask.execution_state === 'working' ? '#10b981' : '#6b7280',
-                        color: 'white',
-                        fontSize: '14px',
-                        fontWeight: '500',
-                      }"
-                    >
-                      {{ selectedTask.execution_state === 'working' ? '⏱️ 工作中' : '💤 空闲' }}
-                    </span>
-                    <NButton
-                      v-if="selectedTask.execution_state === 'idle'"
-                      type="success"
-                      size="small"
-                      @click="handleStartWork"
-                      :disabled="isTaskLocked(selectedTask)"
-                    >
-                      ▶️ 开始工作
-                    </NButton>
-                    <NButton
-                      v-else
-                      type="warning"
-                      size="small"
-                      @click="handleStopWork"
-                    >
-                      ⏸️ 停止工作
-                    </NButton>
-                  </div>
-                </div>
-
-                <NGrid :x-gap="12" :y-gap="12" :cols="2" style="margin-top: 24px">
-                  <NGridItem>
-                    <div>
-                      <div style="font-size: 12px; color: #999">优先级</div>
-                      <div>P{{ selectedTask.priority }}</div>
+                <!-- 状态区域：逻辑状态和执行状态水平排列 -->
+                <div style="margin-top: 16px; display: flex; gap: 16px; align-items: flex-start">
+                  <!-- 逻辑状态 -->
+                  <div style="flex: 1; min-width: 0">
+                    <div style="font-size: 11px; color: #999; margin-bottom: 6px">逻辑状态</div>
+                    <div style="display: flex; align-items: center; gap: 8px">
+                      <span
+                        :style="{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '4px 10px',
+                          borderRadius: '4px',
+                          backgroundColor: getStatusColor(selectedTask.status),
+                          color: 'white',
+                          fontSize: '13px',
+                          fontWeight: '500',
+                          whiteSpace: 'nowrap',
+                        }"
+                      >
+                        {{ getStatusIcon(selectedTask.status) }} {{ getStatusLabel(selectedTask.status) }}
+                      </span>
+                      <NSelect
+                        :value="selectedTask.status"
+                        :options="statusOptions"
+                        size="small"
+                        style="flex: 1; min-width: 100px; max-width: 140px"
+                        @update:value="handleStatusChange"
+                      />
                     </div>
-                  </NGridItem>
-                  <NGridItem>
-                    <div>
-                      <div style="font-size: 12px; color: #999">预计时间</div>
-                      <div>
-                        {{
-                          getEffectiveEstimatedTime(selectedTask) !== null
-                            ? formatDuration(getEffectiveEstimatedTime(selectedTask)!)
-                            : '未设定'
-                        }}
-                        <span v-if="selectedTask.estimated_time_ms === null && getEffectiveEstimatedTime(selectedTask) !== null" style="font-size: 11px; color: #999">
-                          (来自子任务)
+                  </div>
+
+                  <!-- 执行状态 -->
+                  <div style="flex: 1; min-width: 0">
+                    <div style="font-size: 11px; color: #999; margin-bottom: 6px">执行状态</div>
+                    <div v-if="selectedTask.status === 'in_progress'" style="display: flex; align-items: center; gap: 8px">
+                      <span
+                        :style="{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '4px 10px',
+                          borderRadius: '4px',
+                          backgroundColor: selectedTask.execution_state === 'working' ? '#10b981' : '#6b7280',
+                          color: 'white',
+                          fontSize: '13px',
+                          fontWeight: '500',
+                          whiteSpace: 'nowrap',
+                        }"
+                      >
+                        {{ selectedTask.execution_state === 'working' ? '⏱️ 工作中' : '💤 空闲' }}
+                      </span>
+                      <NButton
+                        v-if="selectedTask.execution_state === 'idle'"
+                        type="success"
+                        size="small"
+                        @click="handleStartWork"
+                        :disabled="isTaskLocked(selectedTask)"
+                        style="flex-shrink: 0"
+                      >
+                        ▶️ 开始
+                      </NButton>
+                      <NButton
+                        v-else
+                        type="warning"
+                        size="small"
+                        @click="handleStopWork"
+                        style="flex-shrink: 0"
+                      >
+                        ⏸️ 停止
+                      </NButton>
+                    </div>
+                    <div v-else style="color: #999; font-size: 12px; height: 30px; display: flex; align-items: center">
+                      仅"进行中"任务可执行
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 基础信息：优先级、时间信息水平排列（2列） -->
+                <div style="margin-top: 20px; display: flex; gap: 16px">
+                  <!-- 优先级 -->
+                  <div style="flex: 1">
+                    <div style="font-size: 11px; color: #999; margin-bottom: 4px">优先级</div>
+                    <div style="font-size: 18px; font-weight: 600; color: #333">P{{ selectedTask.priority }}</div>
+                  </div>
+
+                  <!-- 时间信息（预计 + 已用） -->
+                  <div style="flex: 1">
+                    <div style="font-size: 11px; color: #999; margin-bottom: 4px">时间信息</div>
+                    <div style="display: flex; flex-direction: column; gap: 4px">
+                      <!-- 预计时间 -->
+                      <div style="display: flex; align-items: center; gap: 6px">
+                        <span style="font-size: 12px; color: #666; width: 50px">预计：</span>
+                        <span style="font-size: 14px; font-weight: 500">
+                          {{
+                            getEffectiveEstimatedTime(selectedTask) !== null
+                              ? formatDuration(getEffectiveEstimatedTime(selectedTask)!)
+                              : '未设定'
+                          }}
+                        </span>
+                        <span v-if="selectedTask.estimated_time_ms === null && getEffectiveEstimatedTime(selectedTask) !== null" style="font-size: 10px; color: #999">
+                          (子任务)
+                        </span>
+                      </div>
+                      <!-- 已用时间 -->
+                      <div style="display: flex; align-items: center; gap: 6px">
+                        <span style="font-size: 12px; color: #666; width: 50px">已用：</span>
+                        <span style="font-size: 16px; font-weight: 600; color: #18a058">
+                          <template v-if="!hasChildren(selectedTask.id)">
+                            {{ formatDuration(selectedTask.total_logged_ms) }}
+                          </template>
+                          <template v-else>
+                            <span :title="`本任务: ${formatDuration(selectedTask.total_logged_ms)}\n子任务: ${formatDuration(calculateChildrenTotalTime(selectedTask.id))}`">
+                              {{ formatDuration(selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) }}
+                            </span>
+                            <span style="font-size: 10px; color: #999; font-weight: 400; margin-left: 4px">(含子)</span>
+                          </template>
                         </span>
                       </div>
                     </div>
-                  </NGridItem>
-                  <NGridItem :span="2">
-                    <div>
-                      <div style="font-size: 12px; color: #999; margin-bottom: 4px">
-                        {{ hasChildren(selectedTask.id) ? '时间统计' : '已用时间' }}
-                      </div>
-                      <div v-if="!hasChildren(selectedTask.id)">
-                        {{ formatDuration(selectedTask.total_logged_ms) }}
-                      </div>
-                      <div v-else style="display: flex; flex-direction: column; gap: 4px; font-size: 13px">
-                        <div style="display: flex; justify-content: space-between">
-                          <span style="color: #666">本任务：</span>
-                          <span style="font-weight: 500">{{ formatDuration(selectedTask.total_logged_ms) }}</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between">
-                          <span style="color: #666">子任务：</span>
-                          <span style="font-weight: 500">{{ formatDuration(calculateChildrenTotalTime(selectedTask.id)) }}</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; padding-top: 4px; border-top: 1px solid #e5e7eb">
-                          <span style="color: #333; font-weight: 600">总计：</span>
-                          <span style="color: #18a058; font-weight: 600">{{ formatDuration(selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) }}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </NGridItem>
-                </NGrid>
+                  </div>
+                </div>
 
-                <!-- 效率指标 -->
-                <div style="margin-top: 24px">
+                <!-- 效率分析：时间效率和工作效率水平排列 -->
+                <div style="margin-top: 20px">
                   <h4 style="margin-bottom: 12px">📊 效率分析</h4>
+                  <NGrid :x-gap="16" :y-gap="16" :cols="2">
+                    <!-- 时间使用率（新版本：以实际时间为基准） -->
+                    <NGridItem>
+                      <div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
+                          <span style="font-size: 12px; color: #999">时间使用情况</span>
+                          <span style="font-size: 14px; font-weight: 600" :style="{
+                            color: getUsageRateColor(calculateTimeUsageRate(selectedTask))
+                          }">
+                            {{ getUsageRateText(selectedTask) }}
+                          </span>
+                        </div>
+                        <NProgress
+                          type="line"
+                          :percentage="Math.min(calculateTimeUsageRate(selectedTask), 100)"
+                          :color="getUsageRateColor(calculateTimeUsageRate(selectedTask))"
+                          :show-indicator="false"
+                        />
+                        <div style="font-size: 11px; color: #999; margin-top: 4px">
+                          {{ 
+                            getUsageStatusText(
+                              calculateTimeUsageRate(selectedTask), 
+                              hasEstimatedTime(selectedTask), 
+                              selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)
+                            ) 
+                          }}
+                        </div>
+                      </div>
+                    </NGridItem>
 
-                  <!-- 时间效率 -->
-                  <div style="margin-bottom: 16px">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
-                      <span style="font-size: 12px; color: #999">时间效率（预期÷实际）</span>
-                      <span style="font-size: 14px; font-weight: 600" :style="{
-                        color: getEffectiveEstimatedTime(selectedTask) === null ? '#9ca3af' :
-                               calculateTimeEfficiency(selectedTask) >= 100 ? '#10b981' :
-                               calculateTimeEfficiency(selectedTask) >= 80 ? '#f59e0b' : '#ef4444'
-                      }">
-                        {{
-                          getEffectiveEstimatedTime(selectedTask) === null ? '无预期时间' :
-                          (selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0 ? calculateTimeEfficiency(selectedTask).toFixed(1) + '%' : '未开始'
-                        }}
-                      </span>
-                    </div>
-                    <NProgress
-                      v-if="getEffectiveEstimatedTime(selectedTask) !== null && (selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0"
-                      type="line"
-                      :percentage="Math.min(calculateTimeEfficiency(selectedTask), 200)"
-                      :status="calculateTimeEfficiency(selectedTask) >= 100 ? 'success' :
-                              calculateTimeEfficiency(selectedTask) >= 80 ? 'warning' : 'error'"
-                      :show-indicator="false"
-                    />
-                    <div v-if="getEffectiveEstimatedTime(selectedTask) !== null && (selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0" style="font-size: 11px; color: #999; margin-top: 4px">
-                      {{ calculateTimeEfficiency(selectedTask) >= 100 ? '✨ 提前完成' :
-                         calculateTimeEfficiency(selectedTask) >= 80 ? '⚠️ 接近预期' : '🔴 超出预期' }}
-                    </div>
-                  </div>
-
-                  <!-- 工作效率 -->
-                  <div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
-                      <span style="font-size: 12px; color: #999">工作效率（质量评分）</span>
-                      <span style="font-size: 14px; font-weight: 600" :style="{
-                        color: calculateWorkEfficiency(selectedTask) >= 4 ? '#10b981' :
-                               calculateWorkEfficiency(selectedTask) >= 3 ? '#f59e0b' : '#ef4444'
-                      }">
-                        {{ (selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0 ? calculateWorkEfficiency(selectedTask).toFixed(2) + '/5' : '未评分' }}
-                      </span>
-                    </div>
-                    <NProgress
-                      v-if="(selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0"
-                      type="line"
-                      :percentage="(calculateWorkEfficiency(selectedTask) / 5) * 100"
-                      :status="calculateWorkEfficiency(selectedTask) >= 4 ? 'success' :
-                              calculateWorkEfficiency(selectedTask) >= 3 ? 'warning' : 'error'"
-                      :show-indicator="false"
-                    />
-                    <div v-if="(selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0" style="font-size: 11px; color: #999; margin-top: 4px">
-                      {{ '⭐'.repeat(Math.round(calculateWorkEfficiency(selectedTask))) }}
-                    </div>
-                  </div>
+                    <!-- 工作效率 -->
+                    <NGridItem>
+                      <div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
+                          <span style="font-size: 12px; color: #999">工作效率（质量评分）</span>
+                          <span style="font-size: 14px; font-weight: 600" :style="{
+                            color: calculateWorkEfficiency(selectedTask) >= 4 ? '#10b981' :
+                                   calculateWorkEfficiency(selectedTask) >= 3 ? '#f59e0b' : '#ef4444'
+                          }">
+                            {{ (selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0 ? calculateWorkEfficiency(selectedTask).toFixed(2) + '/5' : '未评分' }}
+                          </span>
+                        </div>
+                        <NProgress
+                          v-if="(selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0"
+                          type="line"
+                          :percentage="(calculateWorkEfficiency(selectedTask) / 5) * 100"
+                          :status="calculateWorkEfficiency(selectedTask) >= 4 ? 'success' :
+                                  calculateWorkEfficiency(selectedTask) >= 3 ? 'warning' : 'error'"
+                          :show-indicator="false"
+                        />
+                        <div v-if="(selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0" style="font-size: 11px; color: #999; margin-top: 4px">
+                          {{ '⭐'.repeat(Math.round(calculateWorkEfficiency(selectedTask))) }}
+                        </div>
+                      </div>
+                    </NGridItem>
+                  </NGrid>
                 </div>
 
                 <!-- 时间片展示区域 -->
                 <div style="margin-top: 24px">
-                  <h4 style="margin-bottom: 12px">时间片记录 ({{ selectedTask.time_slices.length }})</h4>
+                  <h4 style="margin-bottom: 12px">时间片记录 ({{ processedTimeSlices.length }})</h4>
 
-                  <div v-if="selectedTask.time_slices.length === 0" style="text-align: center; color: #999; padding: 40px 0; background: #f9f9f9; border-radius: 8px">
+                  <div v-if="processedTimeSlices.length === 0" style="text-align: center; color: #999; padding: 40px 0; background: #f9f9f9; border-radius: 8px">
                     暂无时间片记录
                   </div>
 
@@ -1734,26 +2663,27 @@ onBeforeUnmount(() => {
                     </div>
 
                     <!-- 右侧：列表面板 (2.5份) -->
-                    <div style="flex: 2.5; background: white; border: 1px solid #e5e7eb; border-radius: 8px; overflow-y: auto">
+                    <div ref="timeSliceListRef" style="flex: 2.5; background: white; border: 1px solid #e5e7eb; border-radius: 8px; overflow-y: auto">
                       <div
-                        v-for="slice in selectedTask.time_slices"
+                        v-for="slice in processedTimeSlices"
                         :key="slice.id"
                         @click="handleTimeSliceClick(slice)"
-                        :class="['time-slice-item', { selected: selectedTimeSlice?.id === slice.id }]"
+                        :class="['time-slice-item', { selected: selectedTimeSlice?.id === slice.id, running: slice._isRunning }]"
                       >
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px">
-                          <div style="font-size: 14px; font-weight: 500; color: #333">
+                          <div style="font-size: 14px; font-weight: 500; color: #333; display: flex; align-items: center; gap: 6px">
+                            <span v-if="slice._isRunning" style="color: #ef4444">⏱️</span>
                             {{ new Date(slice.start_at).toLocaleString('zh-CN', {
                               month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
                             }) }}
                           </div>
-                          <div style="font-size: 14px; font-weight: 600; color: #18a058">
+                          <div style="font-size: 14px; font-weight: 600" :style="{ color: slice._isRunning ? '#ef4444' : '#18a058' }">
                             {{ formatDuration(slice.duration_ms) }}
                           </div>
                         </div>
                         <div style="display: flex; justify-content: space-between; align-items: center">
                           <div style="font-size: 12px; color: #f59e0b">
-                            {{ '⭐'.repeat(slice.efficiency_score) }}
+                            {{ slice.efficiency_score ? '⭐'.repeat(slice.efficiency_score) : '⏱️ 运行中' }}
                           </div>
                           <div v-if="slice.note" style="font-size: 12px; color: #999; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
                             {{ slice.note }}
@@ -1770,9 +2700,9 @@ onBeforeUnmount(() => {
             </div>
 
         <!-- 右侧：统计区 -->
-        <div style="background: white; display: flex; flex-direction: column; gap: 1px;">
-          <!-- 1. 总时间统计条 -->
-          <div style="padding: 12px 16px; background: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+        <div style="background: white; display: flex; flex-direction: column; gap: 1px; height: 100%;">
+          <!-- 1. 总时间统计条 - 10% -->
+          <div style="flex: 0 0 auto; padding: 8px 12px; background: #f9fafb; border-bottom: 1px solid #e5e7eb;">
             <div style="font-size: 20px; font-weight: 600; color: #18a058; margin-bottom: 4px;">
               {{ formatDuration(stats.totalTime) }}
             </div>
@@ -1782,8 +2712,8 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <!-- 2. 24小时效率图 -->
-          <div style="flex: 1; padding: 16px; border-bottom: 1px solid #e5e7eb;">
+          <!-- 2. 24小时效率图（日表） - 40% -->
+          <div style="flex: 4; padding: 8px; border-bottom: 1px solid #e5e7eb; min-height: 0; overflow: hidden;">
             <DailyEfficiencyChart
               ref="dailyChartRef"
               :time-slices="tasks.flatMap(t => t.time_slices)"
@@ -1791,16 +2721,16 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <!-- 3. 本周柱状图 -->
-          <div style="flex: 1; padding: 16px; border-bottom: 1px solid #e5e7eb;">
+          <!-- 3. 本周柱状图（周表） - 20% -->
+          <div style="flex: 2; padding: 8px; border-bottom: 1px solid #e5e7eb; min-height: 0; overflow: hidden;">
             <WeeklyBarChart
               :time-slices="tasks.flatMap(t => t.time_slices)"
               @date-click="handleHeatmapDateClick"
             />
           </div>
 
-          <!-- 4. 年度活动热力图 -->
-          <div style="flex: 1; padding: 16px;">
+          <!-- 4. 年度活动热力图 - 30% 自适应剩余空间 -->
+          <div style="flex: 3; padding: 8px; min-height: 0; overflow: hidden;">
             <ActivityHeatmap
               :time-slices="tasks.flatMap(t => t.time_slices)"
               @date-click="handleHeatmapDateClick"
@@ -1836,26 +2766,44 @@ onBeforeUnmount(() => {
             style="width: 100%"
           />
         </NFormItem>
-        <NFormItem label="预计时间">
-          <NInputNumber
-            v-model:value="newTask.estimated_time_ms"
-            :min="0.1"
-            :step="0.5"
-            clearable
-            placeholder="留空表示无预期时间"
-            style="width: 100%"
-          >
-            <template #suffix>小时</template>
-          </NInputNumber>
-        </NFormItem>
-        <NFormItem label="截止时间">
-          <NDatePicker
-            v-model:formatted-value="newTask.due_at"
-            type="datetime"
-            format="yyyy-MM-dd HH:mm"
-            value-format="yyyy-MM-dd HH:mm:ss"
-            clearable
-            placeholder="选择截止时间（可选）"
+        <!-- 预计时间和截止时间放在同一行 -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px">
+          <NFormItem label="预计时间">
+            <NInputNumber
+              v-model:value="newTask.estimated_time_ms"
+              :min="0.1"
+              :step="0.5"
+              clearable
+              placeholder="留空表示无预期时间"
+              style="width: 100%"
+            >
+              <template #suffix>小时</template>
+            </NInputNumber>
+          </NFormItem>
+          <NFormItem label="截止时间">
+            <NDatePicker
+              v-model:formatted-value="newTask.due_at"
+              type="datetime"
+              format="yyyy-MM-dd HH:mm"
+              value-format="yyyy-MM-dd HH:mm:ss"
+              clearable
+              placeholder="选择截止时间（可选）"
+              style="width: 100%"
+            />
+          </NFormItem>
+        </div>
+        <!-- 优先级选择 -->
+        <NFormItem label="优先级">
+          <NSelect
+            v-model:value="newTask.priority"
+            :options="[
+              { label: 'P1 - 最高优先级', value: 1 },
+              { label: 'P2 - 高优先级', value: 2 },
+              { label: 'P3 - 中等优先级', value: 3 },
+              { label: 'P4 - 低优先级', value: 4 },
+              { label: 'P5 - 最低优先级', value: 5 }
+            ]"
+            placeholder="选择优先级"
             style="width: 100%"
           />
         </NFormItem>

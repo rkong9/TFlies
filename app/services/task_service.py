@@ -24,6 +24,34 @@ class TaskService:
 
     async def create(self, data: TaskCreate) -> Task:
         payload = data.model_dump()
+        
+        # 查找同级任务的最大position，新任务排在最后
+        parent_id = payload.get("parent_id")
+        
+        # 查询同级任务的最大position
+        if parent_id:
+            # 有父任务：查找同一父任务下的所有子任务
+            stmt = (
+                select(func.max(Task.position))
+                .where(Task.parent_id == parent_id)
+            )
+        else:
+            # 顶级任务：查找所有没有父任务的任务
+            stmt = (
+                select(func.max(Task.position))
+                .where(Task.parent_id.is_(None))
+            )
+        
+        result = await self._session.execute(stmt)
+        max_position = result.scalar()
+        
+        # 设置新任务的position（比最大值大10，留出插入空间）
+        if max_position is not None:
+            payload["position"] = max_position + 10.0
+        else:
+            # 如果没有同级任务，设置为10.0
+            payload["position"] = 10.0
+        
         task = Task(**payload)
         self._session.add(task)
         await self._session.flush()
@@ -53,11 +81,22 @@ class TaskService:
     async def update(self, task: Task, data: TaskUpdate) -> Task:
         # 检查任务是否因DDL过期而被锁定
         if await self._is_task_locked(task):
-            from fastapi import HTTPException, status
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="任务已因DDL过期而锁定，无法修改"
+            updates = data.model_dump(exclude_unset=True)
+
+            # 允许停止DDL锁定的任务（execution_state -> idle）
+            # 这是合理的操作，因为任务DDL过期时应该能够停止正在执行的任务
+            is_stopping_task = (
+                len(updates) == 1 and
+                "execution_state" in updates and
+                updates["execution_state"] == ExecutionState.IDLE
             )
+
+            if not is_stopping_task:
+                from fastapi import HTTPException, status
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="任务已因DDL过期而锁定，无法修改"
+                )
 
         updates = data.model_dump(exclude_unset=True)
 
@@ -180,12 +219,12 @@ class TaskService:
             "updated_at": task.updated_at.isoformat(),
         }
 
-        # Serialize time slices
+        # Serialize time slices (only completed ones)
         time_slices = [
             {
                 "id": str(ts.id),
                 "start_at": ts.start_at.isoformat(),
-                "end_at": ts.end_at.isoformat(),
+                "end_at": ts.end_at.isoformat() if ts.end_at else None,
                 "duration_ms": ts.duration_ms,
                 "efficiency_score": ts.efficiency_score,
                 "note": ts.note,
@@ -295,15 +334,45 @@ class TaskService:
         return False
 
     async def _ensure_parent_state(self, task: Task) -> None:
-        await self._session.refresh(task, attribute_names=["children"])
+        """根据子任务状态和自身工作历史推导父任务状态。
+
+        优先级规则：
+        1. 所有子任务完成 → COMPLETED
+        2. 有子任务进行中 → IN_PROGRESS
+        3. 任务有工作记录（正在工作或有时间片）→ IN_PROGRESS
+        4. 默认 → TODO
+
+        理由：任务的状态应该同时反映子任务进度和自身工作历史。
+        一旦任务开始工作（产生时间片），就不应该因为后续组织变化（如添加子任务）
+        而回退到"未开始"状态。
+        """
+        await self._session.refresh(task, attribute_names=["children", "time_slices"])
         if not task.children:
             return
+
+        # 优先级1: 所有子任务完成
         if all(child.status == TaskStatus.COMPLETED for child in task.children):
             task.status = TaskStatus.COMPLETED
+        # 优先级2: 有子任务进行中
         elif any(child.status == TaskStatus.IN_PROGRESS for child in task.children):
             task.status = TaskStatus.IN_PROGRESS
+        # 优先级3: 任务有工作记录
         else:
-            task.status = TaskStatus.TODO
+            # 如果任务正在工作或已有时间片，保持 IN_PROGRESS 状态
+            # 原因：
+            # 1. 任务已经投入了工作时间，不应该因为后来添加子任务就回退
+            # 2. 满足数据库约束（execution_state = WORKING 需要 status = IN_PROGRESS）
+            # 3. 符合管理视角：有实际工作的任务就是"进行中"
+            has_work_history = (
+                task.execution_state == ExecutionState.WORKING or
+                (task.time_slices and len(task.time_slices) > 0)
+            )
+
+            if has_work_history:
+                task.status = TaskStatus.IN_PROGRESS
+            else:
+                task.status = TaskStatus.TODO
+
         await self._session.flush()
         if task.parent_id:
             parent = await self.get(task.parent_id)
@@ -331,7 +400,7 @@ class TaskService:
         """Restore a task from trash.
 
         This recreates the entire task tree (task + children + time slices)
-        from the saved snapshot.
+        from the saved snapshot, preserving the original parent relationship.
         """
         snapshot = deleted_task.snapshot
 
@@ -345,8 +414,20 @@ class TaskService:
                 detail=f"项目不存在，无法恢复任务"
             )
 
-        # Restore task tree
-        restored_task = await self._restore_task_tree(snapshot, project_id)
+        # Get original parent_id from snapshot
+        original_parent_id = snapshot["task"].get("parent_id")
+        parent_id = None
+
+        # If task had a parent, verify it still exists
+        if original_parent_id:
+            parent_id = UUID(original_parent_id)
+            parent_task = await self.get(parent_id)
+            if not parent_task:
+                # Original parent doesn't exist anymore, restore as top-level task
+                parent_id = None
+
+        # Restore task tree with original parent relationship
+        restored_task = await self._restore_task_tree(snapshot, project_id, parent_id)
 
         # Delete from trash
         await self._session.delete(deleted_task)
@@ -381,6 +462,10 @@ class TaskService:
 
         # Restore time slices
         for ts_data in snapshot["time_slices"]:
+            # Skip time slices without end_at (shouldn't happen, but be defensive)
+            if not ts_data.get("end_at"):
+                continue
+
             time_slice = TimeSlice(
                 task_id=task.id,
                 start_at=dt.datetime.fromisoformat(ts_data["start_at"]),
@@ -438,6 +523,9 @@ class TaskService:
     async def update_position(self, task: Task, new_position: float) -> Task:
         """Update task position for drag-and-drop sorting.
 
+        Position updates are always allowed, even for DDL-locked tasks,
+        as they only affect display order, not task content.
+
         Args:
             task: The task to update
             new_position: New position value (float)
@@ -445,14 +533,6 @@ class TaskService:
         Returns:
             Updated task
         """
-        # 检查任务是否因DDL过期而被锁定
-        if await self._is_task_locked(task):
-            from fastapi import HTTPException, status
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="任务已因DDL过期而锁定，无法移动"
-            )
-
         task.position = new_position
         await self._session.flush()
         return task
