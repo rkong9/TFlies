@@ -268,7 +268,7 @@ const initChart = () => {
     series: [
       {
         type: 'pie',
-        radius: ['40%', '70%'], // 环形图
+        radius: ['40%', '85%'], // 环形图 - 内环40%，外半径85%
         avoidLabelOverlap: false,
         label: {
           show: false,

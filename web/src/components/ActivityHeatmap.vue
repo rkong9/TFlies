@@ -488,6 +488,7 @@ onMounted(() => {
   display: flex;
   gap: 3px;
   padding-bottom: 12px; /* 与滚动条的距离 */
+  padding-right: 16px; /* 避免右侧格子被遮挡 */
 }
 
 .week-column {
