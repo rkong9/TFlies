@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.task import Task
 from app.models.time_slice import TimeSlice
 from app.schemas.time_slice import TimeSliceCreate, TimeSliceUpdate
 
@@ -41,12 +42,23 @@ class TimeSliceService:
         start = updates.get("start_at", timeslice.start_at)
         end = updates.get("end_at", timeslice.end_at)
 
+        # 如果要转移到新任务，先验证新任务存在
+        new_task_id = updates.get("task_id")
+        if new_task_id is not None and new_task_id != timeslice.task_id:
+            new_task = await self._session.get(Task, new_task_id)
+            if new_task is None:
+                raise ValueError(f"Task {new_task_id} not found")
+            # 使用新任务ID进行重叠检查
+            task_id_for_overlap = new_task_id
+        else:
+            task_id_for_overlap = timeslice.task_id
+
         # 只在 end 不为 None 时才验证和计算
         if end is not None:
             if start > end:
                 raise ValueError("start_at must be earlier than or equal to end_at")
             updates.setdefault("duration_ms", self._duration_ms(start, end))
-            await self._ensure_no_overlap(timeslice.task_id, start, end, exclude_id=timeslice.id)
+            await self._ensure_no_overlap(task_id_for_overlap, start, end, exclude_id=timeslice.id)
 
         for field, value in updates.items():
             setattr(timeslice, field, value)

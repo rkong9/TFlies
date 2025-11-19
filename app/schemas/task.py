@@ -1,13 +1,12 @@
 """Pydantic models for task resources."""
 
-from __future__ import annotations
-
 import datetime as dt
+from typing import List  # Import List to avoid shadowing by field name
 from uuid import UUID
 
 from pydantic import Field
 
-from app.models.task import ExecutionState, TaskStatus
+from app.models.task import ExecutionState, TaskList, TaskStatus
 from app.schemas.base import APIModel
 from app.schemas.time_slice import TimeSliceRead
 
@@ -20,6 +19,11 @@ class TaskBase(APIModel):
     is_ddl: bool = Field(default=False)
     estimated_time_ms: int | None = Field(default=None, ge=0)
     position: float = Field(default=0.0)
+    # GTD and scheduling fields
+    list: TaskList = Field(default=TaskList.INBOX)
+    tags: List[str] = Field(default_factory=list)  # Must use List (capitalized) to avoid conflict with 'list' field
+    scheduled_date: dt.date | None = None
+    scheduled_time: dt.time | None = None
 
 
 class TaskCreate(TaskBase):
@@ -39,6 +43,11 @@ class TaskUpdate(APIModel):
     status: TaskStatus | None = None
     execution_state: ExecutionState | None = None
     parent_id: UUID | None = None
+    # GTD and scheduling fields
+    list: TaskList | None = None
+    tags: List[str] | None = None
+    scheduled_date: dt.date | None = None
+    scheduled_time: dt.time | None = None
 
 
 class TaskRead(TaskBase):
@@ -49,5 +58,5 @@ class TaskRead(TaskBase):
     execution_state: ExecutionState
     created_at: dt.datetime
     updated_at: dt.datetime
-    time_slices: list[TimeSliceRead] = Field(default_factory=list)
+    time_slices: List[TimeSliceRead] = Field(default_factory=list)
     total_logged_ms: int = 0

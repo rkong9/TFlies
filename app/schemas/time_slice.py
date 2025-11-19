@@ -1,9 +1,6 @@
 """Pydantic models for time slice resources."""
 
-from __future__ import annotations
-
 import datetime as dt
-from typing import Optional
 from uuid import UUID
 
 from pydantic import Field
@@ -13,9 +10,9 @@ from app.schemas.base import APIModel
 
 class TimeSliceBase(APIModel):
     start_at: dt.datetime
-    end_at: Optional[dt.datetime] = None
-    efficiency_score: Optional[int] = Field(default=None, ge=1, le=5)
-    note: Optional[str] = None
+    end_at: dt.datetime | None = None
+    efficiency_score: int | None = Field(default=None, ge=1, le=5)
+    note: str | None = None
 
 
 class TimeSliceCreate(APIModel):
@@ -28,6 +25,7 @@ class TimeSliceCreate(APIModel):
 
 
 class TimeSliceUpdate(APIModel):
+    task_id: UUID | None = None  # Allow reassigning to a different task
     start_at: dt.datetime | None = None
     end_at: dt.datetime | None = None
     efficiency_score: int | None = Field(default=None, ge=1, le=5)

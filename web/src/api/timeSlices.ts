@@ -2,7 +2,7 @@
  * 时间片相关API
  */
 import { apiClient } from './client'
-import type { TimeSlice, TimeSliceCreate } from '@/types'
+import type { TimeSlice, TimeSliceCreate, TimeSliceUpdate } from '@/types'
 
 export const timeSlicesApi = {
   // 获取所有时间片
@@ -18,7 +18,7 @@ export const timeSlicesApi = {
   create: (data: TimeSliceCreate) => apiClient.post<TimeSlice>('/time-slices/', data),
 
   // 更新时间片
-  update: (id: string, data: Partial<TimeSliceCreate>) =>
+  update: (id: string, data: TimeSliceUpdate) =>
     apiClient.patch<TimeSlice>(`/time-slices/${id}`, data),
 
   // 删除时间片

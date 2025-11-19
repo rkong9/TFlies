@@ -1,13 +1,12 @@
 """Task domain model."""
 
-from __future__ import annotations
-
 import datetime as dt
 import enum
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, Enum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, Time
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -31,6 +30,16 @@ class ExecutionState(str, enum.Enum):
 
     IDLE = "idle"
     WORKING = "working"
+
+
+class TaskList(str, enum.Enum):
+    """GTD workflow lists for task organization."""
+
+    INBOX = "inbox"
+    TODAY = "today"
+    NEXT = "next"
+    SOMEDAY = "someday"
+    WAITING = "waiting"
 
 
 class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -67,6 +76,33 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         comment="Sort position for ordering tasks within the same parent",
     )
 
+    # GTD and scheduling fields
+    list: Mapped[TaskList] = mapped_column(
+        Enum(TaskList, name="task_list"),
+        nullable=False,
+        default=TaskList.INBOX,
+        comment="GTD workflow list: inbox, today, next, someday, waiting",
+    )
+    tags: Mapped[List[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default="[]",
+        comment="Tags for categorization and filtering (e.g., @home, #coding)",
+    )
+    scheduled_date: Mapped[dt.date | None] = mapped_column(
+        Date,
+        nullable=True,
+        default=None,
+        comment="Date when the task is scheduled to be done",
+    )
+    scheduled_time: Mapped[dt.time | None] = mapped_column(
+        Time,
+        nullable=True,
+        default=None,
+        comment="Optional time of day when task is scheduled",
+    )
+
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("project.id", ondelete="CASCADE"),
         nullable=False,
@@ -76,18 +112,18 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=None,
     )
 
-    project: Mapped[Project] = relationship(back_populates="tasks", lazy="joined")
-    parent: Mapped[Task | None] = relationship(
+    project: Mapped["Project"] = relationship(back_populates="tasks", lazy="joined")
+    parent: Mapped["Task | None"] = relationship(
         remote_side="Task.id",
         back_populates="children",
         lazy="selectin",
     )
-    children: Mapped[list[Task]] = relationship(
+    children: Mapped[List["Task"]] = relationship(
         back_populates="parent",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-    time_slices: Mapped[list[TimeSlice]] = relationship(
+    time_slices: Mapped[List["TimeSlice"]] = relationship(
         back_populates="task",
         cascade="all, delete-orphan",
         lazy="selectin",
@@ -95,7 +131,7 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __table_args__ = (
         CheckConstraint(
-            "(status = 'in_progress') OR (execution_state = 'idle')",
+            "(status = 'IN_PROGRESS') OR (execution_state = 'IDLE')",
             name="ck_execution_only_when_in_progress",
         ),
     )

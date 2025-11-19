@@ -1,7 +1,5 @@
 """Pydantic models for deleted task/trash resources."""
 
-from __future__ import annotations
-
 import datetime as dt
 from uuid import UUID
 

@@ -68,10 +68,19 @@ const timeSliceForm = ref({
 })
 const editTimeSliceForm = ref({
   id: '',
+  task_id: '',
   start_at: '',
   end_at: '',
   efficiency_score: 3,
   note: '',
+})
+
+// 任务选项（用于时间片转移）
+const taskOptions = computed(() => {
+  return tasks.value.map(task => ({
+    label: task.title,
+    value: task.id,
+  }))
 })
 
 // 任务树展开状态（从localStorage恢复，默认全部折叠）
@@ -1248,6 +1257,7 @@ const handleEditTimeSlice = () => {
 
   editTimeSliceForm.value = {
     id: selectedTimeSlice.value.id,
+    task_id: selectedTimeSlice.value.task_id,
     start_at: formatDateTime(selectedTimeSlice.value.start_at),
     end_at: selectedTimeSlice.value.end_at ? formatDateTime(selectedTimeSlice.value.end_at) : '',
     efficiency_score: selectedTimeSlice.value.efficiency_score || 3,
@@ -1270,8 +1280,13 @@ const handleUpdateTimeSlice = async () => {
       return
     }
 
-    // 转换为 ISO 格式
+    // 检查是否转移了任务
+    const taskChanged = selectedTimeSlice.value &&
+      editTimeSliceForm.value.task_id !== selectedTimeSlice.value.task_id
+
+    // 转换为 ISO 格式，包含 task_id
     await timeSlicesApi.update(editTimeSliceForm.value.id, {
+      task_id: editTimeSliceForm.value.task_id,
       start_at: startTime.toISOString(),
       end_at: endTime.toISOString(),
       duration_ms: durationMs,
@@ -1279,14 +1294,21 @@ const handleUpdateTimeSlice = async () => {
       note: editTimeSliceForm.value.note || null,
     })
 
-    message.success('时间片更新成功')
+    message.success(taskChanged ? '时间片已转移到新任务' : '时间片更新成功')
     showEditTimeSliceModal.value = false
 
     // 重新加载数据
     await loadData()
 
-    // 更新选中的时间片
-    if (selectedTask.value) {
+    // 更新选中的任务和时间片
+    if (taskChanged) {
+      // 如果任务改变了，切换到新任务
+      const newTaskResponse = await tasksApi.get(editTimeSliceForm.value.task_id)
+      selectedTask.value = newTaskResponse.data
+      selectedTimeSlice.value = newTaskResponse.data.time_slices.find(
+        (ts: TimeSlice) => ts.id === editTimeSliceForm.value.id
+      ) || null
+    } else if (selectedTask.value) {
       const response = await tasksApi.get(selectedTask.value.id)
       selectedTask.value = response.data
       // 更新选中的时间片引用
@@ -2946,6 +2968,14 @@ onBeforeUnmount(() => {
     <!-- 编辑时间片弹窗 -->
     <NModal v-model:show="showEditTimeSliceModal" preset="dialog" title="✏️ 编辑时间片" style="width: 500px">
       <NForm :model="editTimeSliceForm">
+        <NFormItem label="所属任务" required>
+          <NSelect
+            v-model:value="editTimeSliceForm.task_id"
+            :options="taskOptions"
+            filterable
+            placeholder="选择任务"
+          />
+        </NFormItem>
         <NFormItem label="开始时间" required>
           <NDatePicker
             v-model:formatted-value="editTimeSliceForm.start_at"

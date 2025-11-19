@@ -6,6 +6,8 @@ export type TaskStatus = 'todo' | 'in_progress' | 'suspended' | 'completed'
 
 export type ExecutionState = 'idle' | 'working'
 
+export type TaskList = 'inbox' | 'today' | 'next' | 'someday' | 'waiting'
+
 export interface Project {
   id: string
   name: string
@@ -32,6 +34,11 @@ export interface Task {
   status: TaskStatus
   execution_state: ExecutionState
   position: number
+  // GTD and scheduling fields
+  list: TaskList
+  tags: string[]
+  scheduled_date?: string
+  scheduled_time?: string
   created_at: string
   updated_at: string
   time_slices: TimeSlice[]
@@ -70,6 +77,11 @@ export interface TaskCreate {
   estimated_time_ms?: number | null
   status?: TaskStatus
   execution_state?: ExecutionState
+  // GTD and scheduling fields
+  list?: TaskList
+  tags?: string[]
+  scheduled_date?: string
+  scheduled_time?: string
 }
 
 export interface TimeSliceCreate {
@@ -78,6 +90,15 @@ export interface TimeSliceCreate {
   end_at: string | null
   duration_ms?: number | null
   efficiency_score: number | null
+  note?: string | null
+}
+
+export interface TimeSliceUpdate {
+  task_id?: string  // Allow reassigning to a different task
+  start_at?: string
+  end_at?: string | null
+  duration_ms?: number | null
+  efficiency_score?: number | null
   note?: string | null
 }
 
