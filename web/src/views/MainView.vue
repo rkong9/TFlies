@@ -34,9 +34,20 @@ import TrashView from './TrashView.vue'
 import DailyEfficiencyChart from '@/components/DailyEfficiencyChart.vue'
 import WeeklyBarChart from '@/components/WeeklyBarChart.vue'
 import ActivityHeatmap from '@/components/ActivityHeatmap.vue'
+import { useTimeSlices } from '@/composables/useTimeSlices'
 
 const message = useMessage()
 const dialog = useDialog()
+
+// 使用时间片管理 composable
+const {
+  currentTimeSlice,
+  startWork,
+  stopWork,
+  recoverTimeSlice,
+  findWorkingTask
+} = useTimeSlices()
+
 const tasks = ref<Task[]>([])
 const selectedTask = ref<Task | null>(null)
 const selectedTimeSlice = ref<TimeSlice | null>(null)
@@ -50,7 +61,6 @@ const showTrash = ref(false)
 const searchKeyword = ref('')
 const isEditingDescription = ref(false)
 const editingDescriptionText = ref('')
-const currentTimeSlice = ref<{ id: string; start_at: string; task_id: string } | null>(null)
 const now = ref(new Date()) // 用于实时更新正在执行的时间片
 const timeSliceForm = ref({
   efficiency_score: 3,
@@ -219,39 +229,21 @@ const loadData = async () => {
     const workingTask = tasks.value.find(t => t.execution_state === 'working')
 
     if (workingTask) {
-      // 如果有任务在工作，从数据库中找到正在进行的时间片（end_at为null）
-      const ongoingSlice = workingTask.time_slices.find(slice => slice.end_at === null)
+      // 使用统一的时间片恢复逻辑
+      const recovered = recoverTimeSlice(workingTask)
 
-      if (ongoingSlice) {
-        // 找到了正在进行的时间片，恢复它
+      if (recovered) {
+        // 成功恢复时间片
         if (!currentTimeSlice.value) {
-          currentTimeSlice.value = {
-            id: ongoingSlice.id,
-            start_at: ongoingSlice.start_at,
-            task_id: workingTask.id,
-          }
           message.warning(`检测到任务「${workingTask.title}」正在工作中，已自动恢复计时`)
         } else if (currentTimeSlice.value.task_id !== workingTask.id) {
-          // currentTimeSlice指向的任务与实际working的任务不一致，需要修正
-          currentTimeSlice.value = {
-            id: ongoingSlice.id,
-            start_at: ongoingSlice.start_at,
-            task_id: workingTask.id,
-          }
           message.warning(`检测到任务「${workingTask.title}」正在工作中，已同步时间片记录`)
         }
       } else {
-        // 理论上不应该出现这种情况（working状态但没有进行中的时间片）
-        // 这种情况说明数据不一致，需要修正任务状态
+        // 数据不一致：working 状态但没有进行中的时间片
         console.warn('检测到数据不一致：任务状态为working但没有进行中的时间片')
         await tasksApi.update(workingTask.id, { execution_state: 'idle' })
-        currentTimeSlice.value = null
         message.error(`任务「${workingTask.title}」的状态不一致，已自动修正`)
-      }
-    } else {
-      // 没有任务在工作，清空currentTimeSlice
-      if (currentTimeSlice.value) {
-        currentTimeSlice.value = null
       }
     }
   } catch (error) {
@@ -792,6 +784,33 @@ const formatDuration = (ms: number): string => {
   return parts.join(' ') || '0s'
 }
 
+// 格式化时间片的时间范围显示（智能检测跨天）
+const formatTimeSliceRange = (startAt: string, endAt: string): string => {
+  const start = new Date(startAt)
+  const end = new Date(endAt)
+
+  // 判断是否跨天（不同日期）
+  const isSameDay = start.getFullYear() === end.getFullYear() &&
+                    start.getMonth() === end.getMonth() &&
+                    start.getDate() === end.getDate()
+
+  if (isSameDay) {
+    // 同一天：只显示开始时间的日期 + 时间范围
+    return `${start.toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    })} - ${end.toLocaleTimeString('zh-CN', {
+      hour: '2-digit', minute: '2-digit'
+    })}`
+  } else {
+    // 跨天：显示完整的开始和结束日期时间
+    return `${start.toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    })} - ${end.toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    })}`
+  }
+}
+
 const priorityOptions = [
   { label: 'P1 - 最高', value: 1 },
   { label: 'P2 - 高', value: 2 },
@@ -1128,30 +1147,15 @@ const handleStartWork = async () => {
   }
 
   // 检查是否有其他任务正在工作（互斥逻辑）
-  const workingTask = tasks.value.find(t => t.id !== task.id && t.execution_state === 'working')
+  const workingTask = findWorkingTask(tasks.value, task.id)
   if (workingTask) {
     message.warning(`任务「${workingTask.title}」正在工作中，请先停止该任务再开始新任务`)
     return
   }
 
   try {
-    const startTime = new Date().toISOString()
-
-    // 立即创建数据库记录（不传 end_at/efficiency_score/note，使用默认值）
-    const response = await timeSlicesApi.create({
-      task_id: task.id,
-      start_at: startTime,
-    } as TimeSliceCreate)
-
-    // 保存当前时间片（包含 ID）
-    currentTimeSlice.value = {
-      id: response.data.id,
-      start_at: response.data.start_at,
-      task_id: task.id,
-    }
-
-    // 更新执行状态为 working
-    await tasksApi.update(task.id, { execution_state: 'working' })
+    // 使用统一的 startWork 方法
+    await startWork(task)
     message.success('开始工作计时...')
 
     // 重新加载数据
@@ -1159,7 +1163,8 @@ const handleStartWork = async () => {
     const taskResponse = await tasksApi.get(task.id)
     selectedTask.value = taskResponse.data
   } catch (error) {
-    message.error('开始工作失败')
+    const errorMessage = error instanceof Error ? error.message : '开始工作失败'
+    message.error(errorMessage)
     console.error(error)
   }
 }
@@ -1176,20 +1181,15 @@ const handleTimeSliceSubmit = async () => {
   if (!currentTimeSlice.value || !selectedTask.value) return
 
   try {
-    const endTime = new Date()
+    // 计算时长用于显示
     const startTime = new Date(currentTimeSlice.value.start_at)
-    const durationMs = endTime.getTime() - startTime.getTime()
+    const durationMs = new Date().getTime() - startTime.getTime()
 
-    // 更新已有时间片记录（不是创建新记录）
-    await timeSlicesApi.update(currentTimeSlice.value.id, {
-      end_at: endTime.toISOString(),
-      duration_ms: durationMs,
+    // 使用统一的 stopWork 方法
+    await stopWork(selectedTask.value, {
       efficiency_score: timeSliceForm.value.efficiency_score,
-      note: timeSliceForm.value.note,
+      note: timeSliceForm.value.note
     })
-
-    // 更新执行状态为 idle
-    await tasksApi.update(selectedTask.value.id, { execution_state: 'idle' })
 
     message.success(`时间片已保存 (${formatDuration(durationMs)})`)
     showTimeSliceModal.value = false
@@ -1199,7 +1199,6 @@ const handleTimeSliceSubmit = async () => {
       efficiency_score: 3,
       note: '',
     }
-    currentTimeSlice.value = null
 
     // 重新加载数据
     await loadData()
@@ -1208,7 +1207,8 @@ const handleTimeSliceSubmit = async () => {
     const response = await tasksApi.get(selectedTask.value.id)
     selectedTask.value = response.data
   } catch (error) {
-    message.error('保存时间片失败')
+    const errorMessage = error instanceof Error ? error.message : '保存时间片失败'
+    message.error(errorMessage)
     console.error('保存时间片错误:', error)
   }
 }
@@ -2671,13 +2671,13 @@ onBeforeUnmount(() => {
                         :class="['time-slice-item', { selected: selectedTimeSlice?.id === slice.id, running: slice._isRunning }]"
                       >
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px">
-                          <div style="font-size: 14px; font-weight: 500; color: #333; display: flex; align-items: center; gap: 6px">
-                            <span v-if="slice._isRunning" style="color: #ef4444">⏱️</span>
-                            {{ new Date(slice.start_at).toLocaleString('zh-CN', {
-                              month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-                            }) }}
+                          <div style="font-size: 13px; font-weight: 500; color: #333; display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0">
+                            <span v-if="slice._isRunning" style="color: #ef4444; flex-shrink: 0">⏱️</span>
+                            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">
+                              {{ formatTimeSliceRange(slice.start_at, slice.end_at) }}
+                            </span>
                           </div>
-                          <div style="font-size: 14px; font-weight: 600" :style="{ color: slice._isRunning ? '#ef4444' : '#18a058' }">
+                          <div style="font-size: 14px; font-weight: 600; flex-shrink: 0; margin-left: 8px" :style="{ color: slice._isRunning ? '#ef4444' : '#18a058' }">
                             {{ formatDuration(slice.duration_ms) }}
                           </div>
                         </div>

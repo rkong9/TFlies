@@ -85,22 +85,33 @@ const processDayTimeSlices = (day: Date): TimeSegment[] => {
   const isToday = day.toDateString() === now.toDateString()
   const currentHour = isToday ? (now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600) : 24
 
-  // 过滤出这一天的时间片
+  // 过滤出与这一天有交集的时间片
   // 只处理已完成的时间片（end_at 不为 null）
   const todaySlices = props.timeSlices
     .filter(slice => {
       if (!slice.end_at) return false // 过滤掉未完成的时间片
       const sliceStart = new Date(slice.start_at)
-      return sliceStart >= dayStart && sliceStart < dayEnd
+      const sliceEnd = new Date(slice.end_at)
+      // 时间片与选定日期有交集：时间片结束时间 > 当天开始 && 时间片开始时间 < 当天结束
+      return sliceEnd > dayStart && sliceStart < dayEnd
     })
     .map(slice => {
       const start = new Date(slice.start_at)
       const end = new Date(slice.end_at!)
-      const startHour = start.getHours() + start.getMinutes() / 60 + start.getSeconds() / 3600
-      const endHour = Math.min(end.getHours() + end.getMinutes() / 60 + end.getSeconds() / 3600, 24)
+
+      // 计算时间片与选定日期的交集部分
+      const actualStart = new Date(Math.max(start.getTime(), dayStart.getTime()))
+      const actualEnd = new Date(Math.min(end.getTime(), dayEnd.getTime()))
+
+      // 转换为相对于当天00:00的小时数
+      const startMs = actualStart.getTime() - dayStart.getTime()
+      const endMs = actualEnd.getTime() - dayStart.getTime()
+      const startHour = startMs / (1000 * 60 * 60)
+      const endHour = endMs / (1000 * 60 * 60)
+
       return {
         startHour,
-        endHour: Math.min(endHour, 24),
+        endHour,
         efficiency: slice.efficiency_score!,
       }
     })
@@ -297,7 +308,9 @@ const initChart = () => {
         const dayTimeSlices = props.timeSlices.filter(slice => {
           if (!slice.end_at) return false
           const sliceStart = new Date(slice.start_at)
-          return sliceStart >= dayStart && sliceStart < dayEnd
+          const sliceEnd = new Date(slice.end_at)
+          // 时间片与选定日期有交集
+          return sliceEnd > dayStart && sliceStart < dayEnd
         })
 
         // 计算统计信息（基于原始时间片，而不是处理后的segments）
@@ -305,8 +318,16 @@ const initChart = () => {
         const uniqueTasks = new Set(dayTimeSlices.map(s => s.task_id))
         const taskCount = uniqueTasks.size
 
-        // 计算总工作时长（毫秒转小时）
-        const totalWorkMs = dayTimeSlices.reduce((sum, slice) => sum + (slice.duration_ms || 0), 0)
+        // 计算总工作时长（只统计在当天的部分，避免跨天时间片重复计算）
+        const totalWorkMs = dayTimeSlices.reduce((sum, slice) => {
+          const sliceStart = new Date(slice.start_at)
+          const sliceEnd = new Date(slice.end_at!)
+          // 计算时间片与当天的交集部分
+          const actualStart = Math.max(sliceStart.getTime(), dayStart.getTime())
+          const actualEnd = Math.min(sliceEnd.getTime(), dayEnd.getTime())
+          const durationInDay = actualEnd - actualStart
+          return sum + durationInDay
+        }, 0)
         const totalWorkHours = totalWorkMs / (1000 * 60 * 60)
 
         // 计算平均效率

@@ -95,22 +95,33 @@ const processTimeSlices = () => {
     ? (now.getHours() * 60 + now.getMinutes()) * 60 * 1000 + now.getSeconds() * 1000
     : dayMs // 如果是历史日期，当前时间就是一天结束
 
-  // 过滤出选定日期的时间片，并转换为从00:00开始的毫秒数
+  // 过滤出与选定日期有交集的时间片，并转换为从00:00开始的毫秒数
   // 只处理已完成的时间片（end_at 不为 null）
+  const dayEnd = new Date(dayStart.getTime() + dayMs)
+
   const todaySlices = props.timeSlices
     .filter(slice => {
       if (!slice.end_at) return false // 过滤掉未完成的时间片
       const sliceStart = new Date(slice.start_at)
-      return sliceStart >= dayStart && sliceStart < new Date(dayStart.getTime() + dayMs)
+      const sliceEnd = new Date(slice.end_at)
+      // 时间片与选定日期有交集：时间片结束时间 > 当天开始 && 时间片开始时间 < 当天结束
+      return sliceEnd > dayStart && sliceStart < dayEnd
     })
     .map(slice => {
       const start = new Date(slice.start_at)
       const end = new Date(slice.end_at!)
-      const startMs = (start.getHours() * 60 + start.getMinutes()) * 60 * 1000 + start.getSeconds() * 1000
-      const endMs = (end.getHours() * 60 + end.getMinutes()) * 60 * 1000 + end.getSeconds() * 1000
+
+      // 计算时间片与选定日期的交集部分
+      const actualStart = new Date(Math.max(start.getTime(), dayStart.getTime()))
+      const actualEnd = new Date(Math.min(end.getTime(), dayEnd.getTime()))
+
+      // 转换为相对于当天00:00的毫秒数
+      const startMs = actualStart.getTime() - dayStart.getTime()
+      const endMs = actualEnd.getTime() - dayStart.getTime()
+
       return {
         startMs,
-        endMs: Math.min(endMs, dayMs), // 确保不超过24小时
+        endMs,
         efficiency: slice.efficiency_score!,
         taskId: slice.task_id,
       }

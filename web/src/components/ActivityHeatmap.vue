@@ -53,16 +53,39 @@ const formatDate = (date: Date): string => {
   return `${year}-${month}-${day}`
 }
 
-// 按日期统计时长（毫秒）
+// 按日期统计时长（毫秒），正确处理跨天时间片
 const getDailyDuration = (): Map<string, number> => {
   const dailyDuration = new Map<string, number>()
 
   props.timeSlices.forEach(slice => {
     if (!slice.end_at || slice.duration_ms === null) return
 
-    const dateKey = formatDate(new Date(slice.start_at))
-    const existing = dailyDuration.get(dateKey) || 0
-    dailyDuration.set(dateKey, existing + slice.duration_ms)
+    const sliceStart = new Date(slice.start_at)
+    const sliceEnd = new Date(slice.end_at)
+
+    // 获取时间片跨越的所有日期
+    const currentDate = new Date(sliceStart)
+    currentDate.setHours(0, 0, 0, 0)
+
+    while (currentDate < sliceEnd) {
+      const dayStart = new Date(currentDate)
+      const dayEnd = new Date(currentDate)
+      dayEnd.setDate(dayEnd.getDate() + 1)
+
+      // 计算时间片在当前日期的实际工作时长
+      const actualStart = Math.max(sliceStart.getTime(), dayStart.getTime())
+      const actualEnd = Math.min(sliceEnd.getTime(), dayEnd.getTime())
+      const durationInDay = actualEnd - actualStart
+
+      if (durationInDay > 0) {
+        const dateKey = formatDate(dayStart)
+        const existing = dailyDuration.get(dateKey) || 0
+        dailyDuration.set(dateKey, existing + durationInDay)
+      }
+
+      // 移动到下一天
+      currentDate.setDate(currentDate.getDate() + 1)
+    }
   })
 
   return dailyDuration

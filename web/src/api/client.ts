@@ -3,7 +3,9 @@
  */
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+// 使用相对路径，由 Vite proxy 代理到后端
+// 这样无论从哪个 IP 访问前端，API 请求都能正确代理
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
