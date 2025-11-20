@@ -21,7 +21,7 @@ class TaskBase(APIModel):
     position: float = Field(default=0.0)
     # GTD and scheduling fields
     list: TaskList = Field(default=TaskList.INBOX)
-    tags: List[str] = Field(default_factory=list)  # Must use List (capitalized) to avoid conflict with 'list' field
+    tags: List[str] = Field(default_factory=lambda: [])  # Use lambda to avoid 'list' field shadowing builtin
     scheduled_date: dt.date | None = None
     scheduled_time: dt.time | None = None
 
@@ -58,5 +58,5 @@ class TaskRead(TaskBase):
     execution_state: ExecutionState
     created_at: dt.datetime
     updated_at: dt.datetime
-    time_slices: List[TimeSliceRead] = Field(default_factory=list)
+    time_slices: List[TimeSliceRead] = Field(default_factory=lambda: [])
     total_logged_ms: int = 0

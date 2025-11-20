@@ -35,6 +35,22 @@ import DailyEfficiencyChart from '@/components/DailyEfficiencyChart.vue'
 import WeeklyBarChart from '@/components/WeeklyBarChart.vue'
 import ActivityHeatmap from '@/components/ActivityHeatmap.vue'
 import { useTimeSlices } from '@/composables/useTimeSlices'
+import {
+  statusOptions,
+  getStatusIcon,
+  getStatusColor,
+  getStatusLabel,
+  getExecutionLabel,
+  getUsageRateColor,
+  getUsageStatusText,
+  getPriorityColor,
+} from '@/composables/constants/taskConstants'
+import {
+  formatDuration,
+  formatTimeSliceRange,
+  formatDate,
+  formatDateTime,
+} from '@/composables/useTaskFormat'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -309,16 +325,6 @@ const reinitializePositions = async () => {
   }
 }
 
-const getStatusIcon = (status: string) => {
-  const icons: Record<string, string> = {
-    todo: '⬜',
-    in_progress: '⏳',
-    suspended: '⏸️',
-    completed: '✅',
-  }
-  return icons[status] || '•'
-}
-
 // 判断 ancestorTask 是否是 descendantTask 的祖先
 const isAncestorOf = (ancestorId: string, descendantId: string): boolean => {
   let currentId: string | undefined = descendantId
@@ -466,37 +472,6 @@ const parentTaskTreeData = computed(() => {
   return topLevelTasks.map(buildTree)
 })
 
-const statusOptions = [
-  { label: '⬜ 待办', value: 'todo' },
-  { label: '⏳ 进行中', value: 'in_progress' },
-  { label: '⏸️ 挂起', value: 'suspended' },
-  { label: '✅ 完成', value: 'completed' },
-]
-
-const getStatusColor = (status: TaskStatus): string => {
-  const colors: Record<TaskStatus, string> = {
-    todo: '#9ca3af',          // 灰色
-    in_progress: '#60a5fa',   // 浅蓝色
-    suspended: '#fbbf24',     // 浅黄色
-    completed: '#34d399',     // 浅绿色
-  }
-  return colors[status] || '#9ca3af'
-}
-
-const getStatusLabel = (status: TaskStatus): string => {
-  const labels: Record<TaskStatus, string> = {
-    todo: '待办',
-    in_progress: '进行中',
-    suspended: '挂起',
-    completed: '完成',
-  }
-  return labels[status] || status
-}
-
-const getExecutionLabel = (execution_state: string): string => {
-  return execution_state === 'working' ? '工作中' : '空闲'
-}
-
 // 获取有效的截止时间（考虑父任务继承）
 const getEffectiveDueAt = (task: Task): string | null => {
   // 如果任务自己有截止时间，直接返回
@@ -618,32 +593,6 @@ const calculateTimeUsageRate = (task: Task): number => {
 const hasEstimatedTime = (task: Task): boolean => {
   const estimatedTime = getEffectiveEstimatedTime(task)
   return estimatedTime !== null && estimatedTime > 0
-}
-
-// 根据时间使用率百分比获取颜色（统一颜色映射）
-const getUsageRateColor = (usageRate: number): string => {
-  if (usageRate < 40) return '#22c55e'      // 绿色：效率很高
-  if (usageRate < 80) return '#eab308'      // 黄色：正常进度
-  if (usageRate < 120) return '#f97316'     // 橙色：接近/轻微超时
-  if (usageRate < 240) return '#ef4444'     // 红色：明显超时
-  return '#000000'                          // 黑色：严重超时
-}
-
-// 根据使用率获取状态文字
-const getUsageStatusText = (usageRate: number, hasEstimate: boolean, actualTime: number): string => {
-  if (actualTime === 0) {
-    return hasEstimate ? '🆕 尚未开始' : '🆕 尚未开始'
-  }
-  
-  if (!hasEstimate) {
-    return '⚠️ 未设定预期时间'
-  }
-  
-  if (usageRate < 40) return '⚡ 效率很高'
-  if (usageRate < 80) return '✅ 进度正常'
-  if (usageRate < 120) return '⚠️ 接近预期'
-  if (usageRate < 240) return '🔴 时间超支'
-  return '💀 严重超时'
 }
 
 // 生成时间使用率的完整文字显示
@@ -772,52 +721,6 @@ const calculateChildrenTotalTime = (taskId: string): number => {
 // 判断任务是否有子任务
 const hasChildren = (taskId: string): boolean => {
   return tasks.value.some(t => t.parent_id === taskId)
-}
-
-// 精确的时间格式化函数（支持天、小时、分钟、秒）
-const formatDuration = (ms: number): string => {
-  if (ms === 0) return '0s'
-
-  const totalSeconds = Math.floor(ms / 1000)
-  const days = Math.floor(totalSeconds / 86400)
-  const hours = Math.floor((totalSeconds % 86400) / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-
-  const parts: string[] = []
-  if (days > 0) parts.push(`${days}d`)
-  if (hours > 0) parts.push(`${hours}h`)
-  if (minutes > 0) parts.push(`${minutes}min`)
-  if (seconds > 0) parts.push(`${seconds}s`)
-
-  return parts.join(' ') || '0s'
-}
-
-// 格式化时间片的时间范围显示（智能检测跨天）
-const formatTimeSliceRange = (startAt: string, endAt: string): string => {
-  const start = new Date(startAt)
-  const end = new Date(endAt)
-
-  // 判断是否跨天（不同日期）
-  const isSameDay = start.getFullYear() === end.getFullYear() &&
-                    start.getMonth() === end.getMonth() &&
-                    start.getDate() === end.getDate()
-
-  if (isSameDay) {
-    // 同一天：只显示开始时间的日期 + 时间范围
-    return `${start.toLocaleString('zh-CN', {
-      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-    })} - ${end.toLocaleTimeString('zh-CN', {
-      hour: '2-digit', minute: '2-digit'
-    })}`
-  } else {
-    // 跨天：显示完整的开始和结束日期时间
-    return `${start.toLocaleString('zh-CN', {
-      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-    })} - ${end.toLocaleString('zh-CN', {
-      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-    })}`
-  }
 }
 
 const priorityOptions = [

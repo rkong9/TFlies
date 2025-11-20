@@ -86,7 +86,7 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     tags: Mapped[List[str]] = mapped_column(
         JSONB,
         nullable=False,
-        default=list,
+        default=lambda: [],
         server_default="[]",
         comment="Tags for categorization and filtering (e.g., @home, #coding)",
     )
