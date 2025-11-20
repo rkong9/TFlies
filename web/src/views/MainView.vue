@@ -51,6 +51,30 @@ import {
   formatDate,
   formatDateTime,
 } from '@/composables/useTaskFormat'
+import {
+  priorityOptions,
+  getEffectiveDueAt,
+  getEffectiveIsDDL,
+  isTaskLocked,
+  isTaskOverdue,
+  calculateChildrenTotalTime,
+  hasChildren,
+  getEffectiveEstimatedTime,
+  calculateTimeUsageRate,
+  hasEstimatedTime,
+  getUsageRateText,
+  calculateTimeEfficiency,
+  calculateWorkEfficiency,
+} from '@/composables/useTaskStatus'
+import {
+  loadExpandedKeys,
+  saveExpandedKeys as _saveExpandedKeys,
+  isAncestorOf as _isAncestorOf,
+  isTaskVisible as _isTaskVisible,
+  findNearestVisibleAncestor as _findNearestVisibleAncestor,
+  getAllDescendantIds as _getAllDescendantIds,
+  buildTaskLabel,
+} from '@/composables/useTaskTree'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -65,6 +89,21 @@ const {
 } = useTimeSlices()
 
 const tasks = ref<Task[]>([])
+
+// Wrapper functions for useTaskStatus utilities (auto-inject tasks.value)
+const _getEffectiveDueAt = (task: Task) => getEffectiveDueAt(task, tasks.value)
+const _getEffectiveIsDDL = (task: Task) => getEffectiveIsDDL(task, tasks.value)
+const _isTaskLocked = (task: Task) => isTaskLocked(task, tasks.value)
+const _isTaskOverdue = (task: Task) => isTaskOverdue(task, tasks.value)
+const _calculateChildrenTotalTime = (taskId: string) => calculateChildrenTotalTime(taskId, tasks.value)
+const _hasChildren = (taskId: string) => hasChildren(taskId, tasks.value)
+const _getEffectiveEstimatedTime = (task: Task) => getEffectiveEstimatedTime(task, tasks.value)
+const _calculateTimeUsageRate = (task: Task) => calculateTimeUsageRate(task, tasks.value)
+const _hasEstimatedTime = (task: Task) => hasEstimatedTime(task, tasks.value)
+const _getUsageRateText = (task: Task) => getUsageRateText(task, tasks.value)
+const _calculateTimeEfficiency = (task: Task) => calculateTimeEfficiency(task, tasks.value)
+const _calculateWorkEfficiency = (task: Task) => calculateWorkEfficiency(task, tasks.value)
+
 const selectedTask = ref<Task | null>(null)
 const selectedTimeSlice = ref<TimeSlice | null>(null)
 const dailyChartRef = ref<InstanceType<typeof DailyEfficiencyChart> | null>(null)
@@ -102,31 +141,10 @@ const taskOptions = computed(() => {
 // 任务树展开状态（从localStorage恢复，默认全部折叠）
 const expandedKeys = ref<string[]>([])
 
-// 从localStorage恢复展开状态
-const loadExpandedKeys = () => {
-  try {
-    const saved = localStorage.getItem('task-tree-expanded-keys')
-    if (saved) {
-      expandedKeys.value = JSON.parse(saved)
-    }
-  } catch (error) {
-    console.error('Failed to load expanded keys:', error)
-  }
-}
-
-// 保存展开状态到localStorage
-const saveExpandedKeys = (keys: string[]) => {
-  try {
-    localStorage.setItem('task-tree-expanded-keys', JSON.stringify(keys))
-  } catch (error) {
-    console.error('Failed to save expanded keys:', error)
-  }
-}
-
 // 处理展开状态变化
 const handleExpandedKeysChange = (keys: string[]) => {
   expandedKeys.value = keys
-  saveExpandedKeys(keys)
+  _saveExpandedKeys(keys)
 }
 
 // 右键菜单相关状态
@@ -143,7 +161,7 @@ const isDraggingStarted = ref(false) // 标记是否真正开始拖拽（区分�
 // 右键菜单选项（根据任务锁定状态动态生成）
 const contextMenuOptions = computed(() => {
   const task = contextMenuTask.value
-  const locked = task ? isTaskLocked(task) : false
+  const locked = task ? _isTaskLocked(task) : false
 
   return [
     {
@@ -325,58 +343,9 @@ const reinitializePositions = async () => {
   }
 }
 
-// 判断 ancestorTask 是否是 descendantTask 的祖先
-const isAncestorOf = (ancestorId: string, descendantId: string): boolean => {
-  let currentId: string | undefined = descendantId
-  while (currentId) {
-    const task = tasks.value.find(t => t.id === currentId)
-    if (!task) break
-    if (task.parent_id === ancestorId) return true
-    currentId = task.parent_id
-  }
-  return false
-}
-
-// 判断任务是否在当前树中可见（所有父任务都展开）
-const isTaskVisible = (taskId: string): boolean => {
-  let currentId: string | undefined = taskId
-  while (currentId) {
-    const task = tasks.value.find(t => t.id === currentId)
-    if (!task) break
-
-    // 检查父任务是否展开
-    if (task.parent_id) {
-      const parentExpanded = expandedKeys.value.includes(task.parent_id)
-      if (!parentExpanded) {
-        return false // 父任务未展开，当前任务不可见
-      }
-    }
-
-    currentId = task.parent_id
-  }
-  return true // 所有父任务都展开，当前任务可见
-}
-
-// 找到选中任务的最近可见祖先
-const findNearestVisibleAncestor = (taskId: string): string | null => {
-  let currentId: string | undefined = taskId
-  const task = tasks.value.find(t => t.id === currentId)
-  if (!task || !task.parent_id) return null
-
-  currentId = task.parent_id
-  while (currentId) {
-    const parentTask = tasks.value.find(t => t.id === currentId)
-    if (!parentTask) break
-
-    // 检查这个父任务是否可见
-    if (isTaskVisible(currentId)) {
-      return currentId
-    }
-
-    currentId = parentTask.parent_id
-  }
-  return null
-}
+// Wrapper functions for tree utilities
+const isTaskVisible = (taskId: string) => _isTaskVisible(taskId, tasks.value, expandedKeys.value)
+const findNearestVisibleAncestor = (taskId: string) => _findNearestVisibleAncestor(taskId, tasks.value, expandedKeys.value)
 
 // 构建任务树（扁平化，不显示项目层级）
 const taskTreeData = computed((): TreeOption[] => {
@@ -390,18 +359,7 @@ const taskTreeData = computed((): TreeOption[] => {
 
   // 构建任务标签（带工作状态高亮，DDL锁定显示圆圈斜杠）
   const buildLabel = (task: Task): string => {
-    const isWorking = task.execution_state === 'working'
-    const locked = isTaskLocked(task)
-
-    // DDL锁定的任务：显示红色圆圈斜杠而不是状态图标
-    let icon = locked ? '🚫' : getStatusIcon(task.status)
-
-    if (isWorking) {
-      // 正在工作的任务：添加工作图标
-      return `${icon} ⏱️ ${task.title}`
-    }
-
-    return `${icon} ${task.title}`
+    return buildTaskLabel(task, _isTaskLocked(task), getStatusIcon)
   }
 
   // 如果有搜索关键词，显示所有匹配的任务（扁平化）
@@ -439,22 +397,8 @@ const taskTreeData = computed((): TreeOption[] => {
 const parentTaskTreeData = computed(() => {
   const excludeTaskId = editTask.value?.id // 编辑时排除自己
 
-  // 获取某任务的所有后代ID
-  const getAllDescendantIds = (taskId: string): Set<string> => {
-    const descendants = new Set<string>()
-    const addDescendants = (id: string) => {
-      const children = tasks.value.filter(t => t.parent_id === id)
-      children.forEach(child => {
-        descendants.add(child.id)
-        addDescendants(child.id)
-      })
-    }
-    addDescendants(taskId)
-    return descendants
-  }
-
   // 获取要排除的任务ID集合
-  const excludedIds = excludeTaskId ? new Set([excludeTaskId, ...getAllDescendantIds(excludeTaskId)]) : new Set()
+  const excludedIds = excludeTaskId ? new Set([excludeTaskId, ..._getAllDescendantIds(excludeTaskId, tasks.value)]) : new Set()
 
   // 过滤并构建树
   const availableTasks = tasks.value.filter(t => !excludedIds.has(t.id))
@@ -472,188 +416,15 @@ const parentTaskTreeData = computed(() => {
   return topLevelTasks.map(buildTree)
 })
 
-// 获取有效的截止时间（考虑父任务继承）
-const getEffectiveDueAt = (task: Task): string | null => {
-  // 如果任务自己有截止时间，直接返回
-  if (task.due_at) {
-    return task.due_at
-  }
-
-  // 如果没有，向上查找父任务的截止时间
-  if (task.parent_id) {
-    const parent = tasks.value.find(t => t.id === task.parent_id)
-    if (parent) {
-      return getEffectiveDueAt(parent)
-    }
-  }
-
-  return null
-}
-
-// 获取是否启用DDL（考虑父任务继承）
-const getEffectiveIsDDL = (task: Task): boolean => {
-  // 如果任务自己启用了DDL，返回true
-  if (task.is_ddl) {
-    return true
-  }
-
-  // 如果没有，向上查找父任务是否启用DDL
-  if (task.parent_id) {
-    const parent = tasks.value.find(t => t.id === task.parent_id)
-    if (parent) {
-      return getEffectiveIsDDL(parent)
-    }
-  }
-
-  return false
-}
-
-// 检查任务是否已锁定（DDL已过期）
-const isTaskLocked = (task: Task): boolean => {
-  const effectiveDueAt = getEffectiveDueAt(task)
-  const effectiveIsDDL = getEffectiveIsDDL(task)
-
-  if (!effectiveDueAt || !effectiveIsDDL) {
-    return false
-  }
-
-  const dueDate = new Date(effectiveDueAt)
-  const now = new Date()
-  return now > dueDate
-}
-
-// 检查任务是否超时（但未必锁定）
-const isTaskOverdue = (task: Task): boolean => {
-  const effectiveDueAt = getEffectiveDueAt(task)
-  if (!effectiveDueAt) {
-    return false
-  }
-
-  const dueDate = new Date(effectiveDueAt)
-  const now = new Date()
-  return now > dueDate
-}
-
 // 守卫函数：确保任务可编辑（统一入口）
 const ensureTaskEditable = (task: Task, action: string = '操作'): boolean => {
-  if (isTaskLocked(task)) {
+  if (_isTaskLocked(task)) {
     message.error(`🔒 任务已锁定，无法${action}`)
     return false
   }
   return true
 }
 
-// 获取有效的预期时间（考虑子任务）
-const getEffectiveEstimatedTime = (task: Task): number | null => {
-  // 如果任务有自己的预期时间，直接返回
-  if (task.estimated_time_ms !== null) {
-    return task.estimated_time_ms
-  }
-
-  // 如果任务没有预期时间，递归计算所有子任务的预期时间总和
-  const children = tasks.value.filter(t => t.parent_id === task.id)
-  if (children.length === 0) {
-    return null // 没有子任务，返回 null
-  }
-
-  let total = 0
-  let hasAnyEstimate = false
-
-  for (const child of children) {
-    const childEstimate = getEffectiveEstimatedTime(child)
-    if (childEstimate !== null) {
-      total += childEstimate
-      hasAnyEstimate = true
-    }
-  }
-
-  return hasAnyEstimate ? total : null
-}
-
-// 计算时间使用率（实际时间/预期时间，新版本：实际时间为基准）
-const calculateTimeUsageRate = (task: Task): number => {
-  const estimatedTime = getEffectiveEstimatedTime(task)
-  const actualTime = task.total_logged_ms + calculateChildrenTotalTime(task.id)
-  
-  // 特殊情况1：还没开始工作
-  if (actualTime === 0) {
-    return 0  // 0% → 绿色
-  }
-  
-  // 特殊情况2：有实际时间，但没设预期时间
-  if (estimatedTime === null || estimatedTime === 0) {
-    return 100  // 100% → 橙色
-  }
-  
-  // 正常情况：实际时间 / 预期时间
-  return (actualTime / estimatedTime) * 100
-}
-
-// 判断是否有预期时间设置
-const hasEstimatedTime = (task: Task): boolean => {
-  const estimatedTime = getEffectiveEstimatedTime(task)
-  return estimatedTime !== null && estimatedTime > 0
-}
-
-// 生成时间使用率的完整文字显示
-const getUsageRateText = (task: Task): string => {
-  const usageRate = calculateTimeUsageRate(task)
-  const hasEstimate = hasEstimatedTime(task)
-  const actualTime = task.total_logged_ms + calculateChildrenTotalTime(task.id)
-  const estimatedTime = getEffectiveEstimatedTime(task)
-  
-  if (actualTime === 0) {
-    return hasEstimate ? '未开始' : '未开始'
-  }
-  
-  if (!hasEstimate) {
-    return `${usageRate.toFixed(1)}% (未设定预期)`
-  }
-  
-  return `${usageRate.toFixed(1)}% (${formatDuration(actualTime)} / ${formatDuration(estimatedTime)})`
-}
-
-// 计算时间效率（预期时间/实际时间，越大越好）- 保留原函数供其他地方使用
-const calculateTimeEfficiency = (task: Task): number => {
-  // 获取有效的预期时间
-  const effectiveEstimatedTime = getEffectiveEstimatedTime(task)
-  if (effectiveEstimatedTime === null) return 0
-
-  // 计算实际用时 = 自己的用时 + 所有子任务的用时
-  const totalActualTime = task.total_logged_ms + calculateChildrenTotalTime(task.id)
-
-  if (totalActualTime === 0) return 0
-  return (effectiveEstimatedTime / totalActualTime) * 100
-}
-
-// 计算工作效率（时间片效率评分的加权平均，越大越好）
-// 递归计算任务及其所有子任务的加权效率
-const calculateWorkEfficiency = (task: Task): number => {
-  let totalWeightedScore = 0
-  let totalDuration = 0
-
-  // 计算自己的时间片
-  for (const slice of task.time_slices) {
-    if (slice.duration_ms !== null && slice.efficiency_score !== null) {
-      totalWeightedScore += slice.duration_ms * slice.efficiency_score
-      totalDuration += slice.duration_ms
-    }
-  }
-
-  // 递归计算所有子任务的效率
-  const children = tasks.value.filter(t => t.parent_id === task.id)
-  for (const child of children) {
-    const childEfficiency = calculateWorkEfficiency(child)
-    const childDuration = child.total_logged_ms + calculateChildrenTotalTime(child.id)
-    if (childDuration > 0) {
-      totalWeightedScore += childDuration * childEfficiency
-      totalDuration += childDuration
-    }
-  }
-
-  if (totalDuration === 0) return 0
-  return totalWeightedScore / totalDuration
-}
 
 // 处理并排序时间片（为正在执行的时间片注入虚拟时间）
 const processedTimeSlices = computed(() => {
@@ -703,33 +474,6 @@ watch(() => selectedTask.value?.time_slices.length, (newLength, oldLength) => {
   }
 })
 
-// 计算子任务的总用时（递归统计所有后代）
-const calculateChildrenTotalTime = (taskId: string): number => {
-  const children = tasks.value.filter(t => t.parent_id === taskId)
-  let total = 0
-
-  for (const child of children) {
-    // 子任务自己的用时
-    total += child.total_logged_ms
-    // 递归计算子任务的子任务
-    total += calculateChildrenTotalTime(child.id)
-  }
-
-  return total
-}
-
-// 判断任务是否有子任务
-const hasChildren = (taskId: string): boolean => {
-  return tasks.value.some(t => t.parent_id === taskId)
-}
-
-const priorityOptions = [
-  { label: 'P1 - 最高', value: 1 },
-  { label: 'P2 - 高', value: 2 },
-  { label: 'P3 - 中', value: 3 },
-  { label: 'P4 - 低', value: 4 },
-  { label: 'P5 - 最低', value: 5 },
-]
 
 const handleSelect = (keys: Array<string | number>, option: Array<TreeOption | null>) => {
   const selected = option[0]
@@ -960,8 +704,8 @@ const handleDailyChartTaskClick = (taskId: string) => {
 
 // 处理描述双击编辑
 const handleDescriptionDoubleClick = () => {
-  if (!selectedTask.value || isTaskLocked(selectedTask.value)) {
-    if (isTaskLocked(selectedTask.value!)) {
+  if (!selectedTask.value || _isTaskLocked(selectedTask.value)) {
+    if (_isTaskLocked(selectedTask.value!)) {
       message.error('🔒 任务已锁定，无法编辑')
     }
     return
@@ -1283,7 +1027,7 @@ const getNodeProps = ({ option }: { option: TreeOption }) => {
     const classes = []
 
     // DDL锁定任务的灰色样式
-    if (isTaskLocked(task)) {
+    if (_isTaskLocked(task)) {
       classes.push('ddl-locked-task')
     }
 
@@ -1682,7 +1426,7 @@ const checkUnfinishedTimeSlices = () => {
 const checkDDLExpiry = async () => {
   if (!currentTimeSlice.value || !selectedTask.value) return
 
-  const locked = isTaskLocked(selectedTask.value)
+  const locked = _isTaskLocked(selectedTask.value)
   if (locked) {
     // 任务DDL已过期，自动停止工作
     try {
@@ -1722,7 +1466,7 @@ let ddlCheckInterval: ReturnType<typeof setInterval> | null = null
 let timeUpdateInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
-  loadExpandedKeys()
+  expandedKeys.value = loadExpandedKeys()
   await loadData()
   checkUnfinishedTimeSlices()
 
@@ -2244,32 +1988,32 @@ onBeforeUnmount(() => {
                   <div style="display: flex; align-items: center; gap: 12px">
                     <h2 style="margin: 0">{{ selectedTask.title }}</h2>
                     <!-- 锁定标记 -->
-                    <span v-if="isTaskLocked(selectedTask)" style="padding: 2px 8px; background: #ef4444; color: white; border-radius: 4px; font-size: 12px; font-weight: 600">
+                    <span v-if="_isTaskLocked(selectedTask)" style="padding: 2px 8px; background: #ef4444; color: white; border-radius: 4px; font-size: 12px; font-weight: 600">
                       🔒 已锁定
                     </span>
                     <!-- 超时标记 -->
-                    <span v-else-if="isTaskOverdue(selectedTask) && getEffectiveIsDDL(selectedTask)" style="padding: 2px 8px; background: #f59e0b; color: white; border-radius: 4px; font-size: 12px; font-weight: 600">
+                    <span v-else-if="_isTaskOverdue(selectedTask) && _getEffectiveIsDDL(selectedTask)" style="padding: 2px 8px; background: #f59e0b; color: white; border-radius: 4px; font-size: 12px; font-weight: 600">
                       ⏰ 即将锁定
                     </span>
-                    <span v-else-if="isTaskOverdue(selectedTask)" style="padding: 2px 8px; background: #f59e0b; color: white; border-radius: 4px; font-size: 12px; font-weight: 600">
+                    <span v-else-if="_isTaskOverdue(selectedTask)" style="padding: 2px 8px; background: #f59e0b; color: white; border-radius: 4px; font-size: 12px; font-weight: 600">
                       ⏰ 已超时
                     </span>
                   </div>
                   <NSpace>
-                    <NButton size="small" @click="handleEditTask(selectedTask)" :disabled="isTaskLocked(selectedTask)">✏️ 编辑</NButton>
+                    <NButton size="small" @click="handleEditTask(selectedTask)" :disabled="_isTaskLocked(selectedTask)">✏️ 编辑</NButton>
                     <NPopconfirm
                       @positive-click="handleDeleteTask(selectedTask.id)"
                       positive-text="确定"
                       negative-text="取消"
-                      :disabled="isTaskLocked(selectedTask)"
+                      :disabled="_isTaskLocked(selectedTask)"
                     >
                       <template #trigger>
-                        <NButton size="small" type="error" :disabled="isTaskLocked(selectedTask)">🗑️ 删除</NButton>
+                        <NButton size="small" type="error" :disabled="_isTaskLocked(selectedTask)">🗑️ 删除</NButton>
                       </template>
                       确定要删除此任务吗？
                     </NPopconfirm>
                     <NButton
-                      v-if="isTaskLocked(selectedTask)"
+                      v-if="_isTaskLocked(selectedTask)"
                       size="small"
                       type="warning"
                       @click="handleUnlockTask"
@@ -2292,7 +2036,7 @@ onBeforeUnmount(() => {
                          cursor: text;
                          line-height: 1.6;
                        "
-                       :title="isTaskLocked(selectedTask) ? '🔒 任务已锁定，无法编辑' : '双击编辑描述'"
+                       :title="_isTaskLocked(selectedTask) ? '🔒 任务已锁定，无法编辑' : '双击编辑描述'"
                   >
                     {{ selectedTask.description || '无描述（双击添加）' }}
                   </div>
@@ -2312,12 +2056,12 @@ onBeforeUnmount(() => {
                 </div>
 
                 <!-- 截止时间显示 -->
-                <div v-if="getEffectiveDueAt(selectedTask)" style="margin-top: 8px; padding: 8px; background: #f9fafb; border-radius: 4px; font-size: 13px">
+                <div v-if="_getEffectiveDueAt(selectedTask)" style="margin-top: 8px; padding: 8px; background: #f9fafb; border-radius: 4px; font-size: 13px">
                   <span style="color: #666">📅 截止时间：</span>
-                  <span :style="{ color: isTaskOverdue(selectedTask) ? '#ef4444' : '#333', fontWeight: isTaskOverdue(selectedTask) ? '600' : 'normal' }">
-                    {{ new Date(getEffectiveDueAt(selectedTask)!).toLocaleString('zh-CN') }}
+                  <span :style="{ color: _isTaskOverdue(selectedTask) ? '#ef4444' : '#333', fontWeight: _isTaskOverdue(selectedTask) ? '600' : 'normal' }">
+                    {{ new Date(_getEffectiveDueAt(selectedTask)!).toLocaleString('zh-CN') }}
                   </span>
-                  <span v-if="getEffectiveIsDDL(selectedTask)" style="margin-left: 8px; color: #f59e0b">
+                  <span v-if="_getEffectiveIsDDL(selectedTask)" style="margin-left: 8px; color: #f59e0b">
                     （DDL模式）
                   </span>
                 </div>
@@ -2377,7 +2121,7 @@ onBeforeUnmount(() => {
                         type="success"
                         size="small"
                         @click="handleStartWork"
-                        :disabled="isTaskLocked(selectedTask)"
+                        :disabled="_isTaskLocked(selectedTask)"
                         style="flex-shrink: 0"
                       >
                         ▶️ 开始
@@ -2415,12 +2159,12 @@ onBeforeUnmount(() => {
                         <span style="font-size: 12px; color: #666; width: 50px">预计：</span>
                         <span style="font-size: 14px; font-weight: 500">
                           {{
-                            getEffectiveEstimatedTime(selectedTask) !== null
-                              ? formatDuration(getEffectiveEstimatedTime(selectedTask)!)
+                            _getEffectiveEstimatedTime(selectedTask) !== null
+                              ? formatDuration(_getEffectiveEstimatedTime(selectedTask)!)
                               : '未设定'
                           }}
                         </span>
-                        <span v-if="selectedTask.estimated_time_ms === null && getEffectiveEstimatedTime(selectedTask) !== null" style="font-size: 10px; color: #999">
+                        <span v-if="selectedTask.estimated_time_ms === null && _getEffectiveEstimatedTime(selectedTask) !== null" style="font-size: 10px; color: #999">
                           (子任务)
                         </span>
                       </div>
@@ -2428,12 +2172,12 @@ onBeforeUnmount(() => {
                       <div style="display: flex; align-items: center; gap: 6px">
                         <span style="font-size: 12px; color: #666; width: 50px">已用：</span>
                         <span style="font-size: 16px; font-weight: 600; color: #18a058">
-                          <template v-if="!hasChildren(selectedTask.id)">
+                          <template v-if="!_hasChildren(selectedTask.id)">
                             {{ formatDuration(selectedTask.total_logged_ms) }}
                           </template>
                           <template v-else>
-                            <span :title="`本任务: ${formatDuration(selectedTask.total_logged_ms)}\n子任务: ${formatDuration(calculateChildrenTotalTime(selectedTask.id))}`">
-                              {{ formatDuration(selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) }}
+                            <span :title="`本任务: ${formatDuration(selectedTask.total_logged_ms)}\n子任务: ${formatDuration(_calculateChildrenTotalTime(selectedTask.id))}`">
+                              {{ formatDuration(selectedTask.total_logged_ms + _calculateChildrenTotalTime(selectedTask.id)) }}
                             </span>
                             <span style="font-size: 10px; color: #999; font-weight: 400; margin-left: 4px">(含子)</span>
                           </template>
@@ -2453,23 +2197,23 @@ onBeforeUnmount(() => {
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
                           <span style="font-size: 12px; color: #999">时间使用情况</span>
                           <span style="font-size: 14px; font-weight: 600" :style="{
-                            color: getUsageRateColor(calculateTimeUsageRate(selectedTask))
+                            color: getUsageRateColor(_calculateTimeUsageRate(selectedTask))
                           }">
-                            {{ getUsageRateText(selectedTask) }}
+                            {{ _getUsageRateText(selectedTask) }}
                           </span>
                         </div>
                         <NProgress
                           type="line"
-                          :percentage="Math.min(calculateTimeUsageRate(selectedTask), 100)"
-                          :color="getUsageRateColor(calculateTimeUsageRate(selectedTask))"
+                          :percentage="Math.min(_calculateTimeUsageRate(selectedTask), 100)"
+                          :color="getUsageRateColor(_calculateTimeUsageRate(selectedTask))"
                           :show-indicator="false"
                         />
                         <div style="font-size: 11px; color: #999; margin-top: 4px">
                           {{ 
                             getUsageStatusText(
-                              calculateTimeUsageRate(selectedTask), 
-                              hasEstimatedTime(selectedTask), 
-                              selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)
+                              _calculateTimeUsageRate(selectedTask), 
+                              _hasEstimatedTime(selectedTask), 
+                              selectedTask.total_logged_ms + _calculateChildrenTotalTime(selectedTask.id)
                             ) 
                           }}
                         </div>
@@ -2482,22 +2226,22 @@ onBeforeUnmount(() => {
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
                           <span style="font-size: 12px; color: #999">工作效率（质量评分）</span>
                           <span style="font-size: 14px; font-weight: 600" :style="{
-                            color: calculateWorkEfficiency(selectedTask) >= 4 ? '#10b981' :
-                                   calculateWorkEfficiency(selectedTask) >= 3 ? '#f59e0b' : '#ef4444'
+                            color: _calculateWorkEfficiency(selectedTask) >= 4 ? '#10b981' :
+                                   _calculateWorkEfficiency(selectedTask) >= 3 ? '#f59e0b' : '#ef4444'
                           }">
-                            {{ (selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0 ? calculateWorkEfficiency(selectedTask).toFixed(2) + '/5' : '未评分' }}
+                            {{ (selectedTask.total_logged_ms + _calculateChildrenTotalTime(selectedTask.id)) > 0 ? _calculateWorkEfficiency(selectedTask).toFixed(2) + '/5' : '未评分' }}
                           </span>
                         </div>
                         <NProgress
-                          v-if="(selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0"
+                          v-if="(selectedTask.total_logged_ms + _calculateChildrenTotalTime(selectedTask.id)) > 0"
                           type="line"
-                          :percentage="(calculateWorkEfficiency(selectedTask) / 5) * 100"
-                          :status="calculateWorkEfficiency(selectedTask) >= 4 ? 'success' :
-                                  calculateWorkEfficiency(selectedTask) >= 3 ? 'warning' : 'error'"
+                          :percentage="(_calculateWorkEfficiency(selectedTask) / 5) * 100"
+                          :status="_calculateWorkEfficiency(selectedTask) >= 4 ? 'success' :
+                                  _calculateWorkEfficiency(selectedTask) >= 3 ? 'warning' : 'error'"
                           :show-indicator="false"
                         />
-                        <div v-if="(selectedTask.total_logged_ms + calculateChildrenTotalTime(selectedTask.id)) > 0" style="font-size: 11px; color: #999; margin-top: 4px">
-                          {{ '⭐'.repeat(Math.round(calculateWorkEfficiency(selectedTask))) }}
+                        <div v-if="(selectedTask.total_logged_ms + _calculateChildrenTotalTime(selectedTask.id)) > 0" style="font-size: 11px; color: #999; margin-top: 4px">
+                          {{ '⭐'.repeat(Math.round(_calculateWorkEfficiency(selectedTask))) }}
                         </div>
                       </div>
                     </NGridItem>
